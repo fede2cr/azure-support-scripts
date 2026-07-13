@@ -2,7 +2,7 @@ name: Build and Deploy to GitHub Pages
 
 on:
   push:
-    branches: [ main, master, rca-tool, pii-anon ]
+    branches: [ main, master, rca-tool ]
     tags: [ 'v*' ]
   workflow_dispatch:
 

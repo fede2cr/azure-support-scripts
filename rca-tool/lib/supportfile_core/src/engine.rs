@@ -970,7 +970,47 @@ fn process_entry(
 /// `parser_filter`, when `Some(name)`, restricts the run to the single parser
 /// with that registry name. `debug` enables per-file dispatch logging to
 /// stderr.
+/// Analyze an archive (or plaintext log) and return the merged per-parser
+/// results.
+///
+/// PII / environment anonymization is applied **unconditionally** to every
+/// parser result before returning, so all downstream consumers (the CLI
+/// `--json` and human summaries, the MCP server that shells out to `rca_cli`,
+/// and any in-process Rust caller) receive scrubbed data. A single
+/// [`Anonymizer`] instance walks the whole archive so subnet grouping and
+/// pseudonym correlation stay consistent across parsers.
+///
+/// See `rca-tool/Developer_PII.md` for the full design.
 pub fn process_archive(
+    path: &Path,
+    parser_filter: Option<&str>,
+    debug: bool,
+) -> Result<ArchiveResults, String> {
+    let mut results = process_archive_inner(path, parser_filter, debug)?;
+    anonymize_results(&mut results, path);
+    Ok(results)
+}
+
+/// Anonymize every parser result in place. Uses one [`Anonymizer`] for the whole
+/// archive so identical hosts/IPs/GUIDs map to identical tokens everywhere.
+fn anonymize_results(results: &mut ArchiveResults, path: &Path) {
+    use supportfile_pii_anonymizer::{extract_archive_hostname, Anonymizer, Config};
+    let mut anon = Anonymizer::new(Config::default());
+    // Register the host embedded in the sosreport / supportconfig archive name
+    // (e.g. `sosreport-<host>-…`, `scc_<host>_<date>_…`) so it is scrubbed
+    // everywhere it appears — including log lines — not just the `source_path`
+    // root directory that the archive-root recognizer already covers.
+    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+        if let Some(host) = extract_archive_hostname(name) {
+            anon.add_known_hostname(&host);
+        }
+    }
+    for value in results.parser_results.values_mut() {
+        anon.scrub_json(value);
+    }
+}
+
+fn process_archive_inner(
     path: &Path,
     parser_filter: Option<&str>,
     debug: bool,
