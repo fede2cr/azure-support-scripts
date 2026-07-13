@@ -470,8 +470,17 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
+ "supportfile_pii_anonymizer",
  "tar",
  "zip",
+]
+
+[[package]]
+name = "supportfile_pii_anonymizer"
+version = "0.0.0"
+dependencies = [
+ "regex",
+ "serde_json",
 ]
 
 [[package]]

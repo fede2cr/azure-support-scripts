@@ -24,6 +24,26 @@ pub fn supportfile_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
+/// Anonymize a full analysis-results JSON document (string in, string out).
+///
+/// The web worker calls this on the merged `analysisResults` object before
+/// posting it to the UI, so the browser never surfaces raw PII/environment
+/// data. A single [`Anonymizer`] instance walks the whole document so subnet
+/// grouping and pseudonym correlation stay consistent across every section.
+/// On malformed input the original string is returned unchanged.
+#[wasm_bindgen(js_name = anonymizeJson)]
+pub fn anonymize_json(json: &str) -> String {
+    use supportfile_pii_anonymizer::{Anonymizer, Config};
+    match serde_json::from_str::<serde_json::Value>(json) {
+        Ok(mut value) => {
+            let mut anon = Anonymizer::new(Config::default());
+            anon.scrub_json(&mut value);
+            serde_json::to_string(&value).unwrap_or_else(|_| json.to_string())
+        }
+        Err(_) => json.to_string(),
+    }
+}
+
 #[wasm_bindgen(js_name = parseAutomationEvents)]
 pub fn parse_automation_events_json(content: &str, source_path: &str) -> String {
     sf::parse_automation_events_json(content, source_path)

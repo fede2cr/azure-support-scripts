@@ -96,8 +96,8 @@ test.describe('Storage Parsers', () => {
     // Should display storage correlation section
     expect(resultHTML).toMatch(/Storage Correlation|UUID|fstab/i);
 
-    // UUIDs present in results.txt should be detected and matched
-    expect(resultHTML).toContain('11111111-aaaa-bbbb-cccc-111111111111');
+    // UUIDs present in results.txt are anonymized to correlatable GUID tokens
+    expect(resultHTML).toMatch(/\[\[GUID-[A-Z]+\]\]/);
 
     // Missing UUID from fstab (OLD-UUID-DEAD) should generate an error
     expect(resultHTML).toContain('OLD-UUID-DEAD');
@@ -116,14 +116,15 @@ test.describe('Storage Parsers', () => {
     // Should display storage correlation section
     expect(resultHTML).toMatch(/Storage Correlation|UUID|fstab/i);
 
-    // UUIDs present in lsblk/blkid should be detected
-    expect(resultHTML).toContain('aaaa1111-1111-1111-1111-aaaaaaaaaaaa');
+    // UUIDs present in lsblk/blkid are anonymized to correlatable GUID tokens
+    expect(resultHTML).toMatch(/\[\[GUID-[A-Z]+\]\]/);
 
-    // UUID that doesn't exist on disk (DEAD0000) should generate error
-    expect(resultHTML).toContain('DEAD0000');
+    // UUID that doesn't exist on disk should generate a not-found error
+    // (the UUID itself is anonymized to a correlatable GUID token).
+    expect(resultHTML).toContain('not found on any device');
 
-    // fstype mismatch: fstab says ext4, disk (sdc1) has xfs for UUID 5678ef01
-    expect(resultHTML).toMatch(/5678ef01.*type.*mismatch|mismatch.*5678ef01|ext4.*xfs|xfs.*ext4/i);
+    // fstype mismatch: fstab says ext4, disk (sdc1) has xfs (UUID anonymized)
+    expect(resultHTML).toMatch(/ext4.*xfs|xfs.*ext4|type.*mismatch|mismatch.*type/i);
 
     // Should have error badge for UUID not found
     const resultText = await getResultText(page);

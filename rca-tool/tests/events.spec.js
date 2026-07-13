@@ -141,9 +141,11 @@ test.describe('Events Parsers', () => {
     expect(resultHTML).toContain('duplicate UUID');
     expect(resultHTML).toContain('can\'t mount');
     
-    // Check for the UUID values
-    expect(resultHTML).toContain('ac560ede-78b1-4d66-b199-2c1284ad1aaf');
-    expect(resultHTML).toContain('f1234567-89ab-cdef-0123-456789abcdef');
+    // UUIDs are anonymized to distinct, correlatable GUID tokens (e.g. [[GUID-A]]).
+    const guidTokens = new Set(
+      [...resultHTML.matchAll(/\[\[GUID-([A-Z]+)\]\]/g)].map((m) => m[1])
+    );
+    expect(guidTokens.size).toBeGreaterThanOrEqual(2);
     
     // Check for devices
     expect(resultHTML).toContain('sde1');

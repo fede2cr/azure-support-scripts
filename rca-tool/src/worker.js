@@ -3168,6 +3168,13 @@ class IncrementalTARParser {
             debugLog('[TAR Parser] azureScheduledEvents post-processing: warnings regenerated:', ase.warnings.length);
         }
         
+        // Anonymize PII/environment data by default before results leave the
+        // worker (see rca-tool/Developer_PII.md). One pass over the whole
+        // document keeps subnet/pseudonym correlation consistent. If the WASM
+        // module isn't ready we cannot scrub; the data stays client-side only.
+        if (typeof WASM_BRIDGE !== 'undefined' && WASM_BRIDGE.isReady && WASM_BRIDGE.isReady()) {
+            return WASM_BRIDGE.anonymizeJson(analysisData);
+        }
         return analysisData;
     }
 
@@ -3347,9 +3354,14 @@ self.onmessage = async function(e) {
                 return;
             }
             
+            // Anonymize PII/environment data by default (see Developer_PII.md).
+            let plaintextAnalysis = analysis;
+            if (typeof WASM_BRIDGE !== 'undefined' && WASM_BRIDGE.isReady && WASM_BRIDGE.isReady()) {
+                plaintextAnalysis = WASM_BRIDGE.anonymizeJson(analysis);
+            }
             self.postMessage({
                 success: true,
-                analysis: analysis,
+                analysis: plaintextAnalysis,
                 progress: 100
             });
             

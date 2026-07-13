@@ -170,8 +170,8 @@ test.describe('Unix Parsers', () => {
     // Verify fstab subsection exists
     expect(content).toContain('Filesystem Table (/etc/fstab)');
     
-    // Verify fstab content is displayed
-    expect(content).toContain('UUID=12345678-1234-1234-1234-123456789abc');
+    // Verify fstab content is displayed (UUID anonymized to a GUID token)
+    expect(content).toMatch(/UUID=\[\[GUID-[A-Z]+\]\]/);
     expect(content).toContain('/boot');
     expect(content).toContain('/data');
     expect(content).toContain('xfs');
@@ -404,7 +404,7 @@ test.describe('Unix Parsers', () => {
     // Request Info subsection
     expect(content).toContain('md-testaccount.z45.blob.storage.azure.net');
     expect(content).toContain('/testcontainer/abcd');
-    expect(content).toContain('117c4d70-8c42-44c5-9f3e-cddeb3eb4264');
+    expect(content).toMatch(/\[\[GUID-[A-Z]+\]\]/);
 
     // Inspection Metadata
     expect(content).toContain('Red Hat Enterprise Linux release 8.8 (Ootpa)');
@@ -509,7 +509,7 @@ test.describe('Unix Parsers', () => {
     // Request Info subsection
     expect(content).toContain('md-djzwkqttxnxb.z50.blob.storage.azure.net');
     expect(content).toContain('/jhfcb3s4xnxv/abcd');
-    expect(content).toContain('fc5d80d2-86aa-4b1f-a601-1d59ae66eba7');
+    expect(content).toMatch(/\[\[GUID-[A-Z]+\]\]/);
     expect(content).toContain('1.57.5');
 
     // Inspection Metadata — SLES distribution

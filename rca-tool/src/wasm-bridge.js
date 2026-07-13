@@ -96,10 +96,31 @@
         return obj;
     }
 
+    /**
+     * Anonymize a full analysis-results object by delegating to the WASM
+     * `anonymizeJson` export. Returns a new, scrubbed object. Best-effort: if
+     * the WASM module is not ready (or the export is missing) the object is
+     * returned unchanged — in the browser the data is client-side only, so a
+     * missed scrub is not an exfiltration, but callers should treat a ready
+     * module as the normal path.
+     */
+    function anonymizeJson(obj) {
+        if (!isReady() || typeof wasm_bindgen.anonymizeJson !== 'function') {
+            return obj;
+        }
+        try {
+            const scrubbed = wasm_bindgen.anonymizeJson(JSON.stringify(obj));
+            return JSON.parse(scrubbed);
+        } catch (e) {
+            return obj;
+        }
+    }
+
     root.WASM_BRIDGE = {
         snakeToCamel: transform,
         parseJson: parseJson,
         aliasKeys: aliasKeys,
+        anonymizeJson: anonymizeJson,
         isReady: isReady,
     };
 })(typeof self !== 'undefined' ? self : globalThis);

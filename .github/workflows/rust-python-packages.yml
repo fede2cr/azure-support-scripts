@@ -18,6 +18,7 @@ permissions:
 env:
   RUST_CORE_DIR: rca-tool/lib/supportfile_core
   RUST_MCP_DIR: rca-tool/lib/supportfile_mcp
+  RUST_PII_DIR: rca-tool/lib/supportfile_pii_anonymizer
   PY_PKG_DIR: rca-tool/lib/supportfile_py
 
 jobs:
@@ -65,6 +66,7 @@ jobs:
           workspaces: |
             ${{ env.RUST_CORE_DIR }} -> target
             ${{ env.RUST_MCP_DIR }} -> target
+            ${{ env.RUST_PII_DIR }} -> target
             ${{ env.PY_PKG_DIR }} -> target
 
       # sccache speeds up compilation on regular pushes/PRs. It is skipped on
@@ -122,9 +124,23 @@ jobs:
         working-directory: ${{ env.RUST_CORE_DIR }}
         run: cargo test --locked --features cli --target "${{ matrix.rust_target }}"
 
-      - name: Verify crate can be packaged
+      # supportfile_core has an optional path dependency on
+      # supportfile_pii_anonymizer (activated by the `cli` feature). Because that
+      # dependency is not yet on crates.io during regular builds, `cargo package`
+      # for supportfile_core cannot resolve it here — the crate is packaged and
+      # published in the `publish-cargo` job, AFTER the anonymizer is published.
+      # Build/test the anonymizer here and verify it packages on its own.
+      - name: Build PII anonymizer crate
+        working-directory: ${{ env.RUST_PII_DIR }}
+        run: cargo build --locked --release --target "${{ matrix.rust_target }}"
+
+      - name: Test PII anonymizer crate
+        working-directory: ${{ env.RUST_PII_DIR }}
+        run: cargo test --locked --target "${{ matrix.rust_target }}"
+
+      - name: Verify PII anonymizer crate can be packaged
         if: matrix.os == 'linux'
-        working-directory: ${{ env.RUST_CORE_DIR }}
+        working-directory: ${{ env.RUST_PII_DIR }}
         run: cargo package --locked --allow-dirty
 
       - name: Build MCP server
@@ -143,12 +159,12 @@ jobs:
       # The `.crate` source packages are platform-independent, so they are only
       # uploaded from the Linux builds. The compiled binaries below are produced
       # for every OS/arch in the matrix (Linux + macOS).
-      - name: Upload Rust crate artifact
+      - name: Upload PII anonymizer crate artifact
         if: matrix.os == 'linux'
         uses: actions/upload-artifact@v7
         with:
-          name: rust-crate-${{ matrix.os }}-${{ matrix.arch }}
-          path: ${{ env.RUST_CORE_DIR }}/target/package/*.crate
+          name: rust-pii-crate-${{ matrix.os }}-${{ matrix.arch }}
+          path: ${{ env.RUST_PII_DIR }}/target/package/*.crate
           if-no-files-found: error
           retention-days: 14
 
@@ -391,8 +407,36 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Set crate versions from tag
-        if: startsWith(github.ref, 'refs/tags/v')
         run: .github/scripts/set-crate-version-from-tag.sh
+
+      # Fail fast (with a clear message) if any crate is still on the committed
+      # placeholder version. Without this, a missed rewrite would surface only
+      # as a confusing "crate version already exists" 0.0.0 publish error.
+      - name: Verify crate versions were set from tag
+        run: |
+          set -euo pipefail
+          fail=0
+          for d in supportfile_core supportfile_py supportfile_wasm supportfile_mcp supportfile_pii_anonymizer; do
+            v=$(grep -m1 -E '^version[[:space:]]*=' "rca-tool/lib/$d/Cargo.toml" \
+              | sed -E 's/.*"([^"]+)".*/\1/')
+            echo "$d -> $v"
+            if [ "$v" = "0.0.0" ]; then
+              echo "ERROR: $d still has placeholder version 0.0.0 — the tag rewrite did not apply." >&2
+              fail=1
+            fi
+          done
+          [ "$fail" -eq 0 ]
+
+      # Publish the anonymizer FIRST: supportfile_core has an optional
+      # (cli-feature) path dependency on it, so it must already exist on
+      # crates.io before supportfile_core can be published. `cargo publish`
+      # waits for the newly published version to appear in the index before
+      # returning, so the subsequent core publish can resolve it.
+      - name: Publish PII anonymizer crate
+        working-directory: ${{ env.RUST_PII_DIR }}
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish --locked --allow-dirty --token "$CARGO_REGISTRY_TOKEN"
 
       - name: Publish crate
         working-directory: ${{ env.RUST_CORE_DIR }}
@@ -464,7 +508,7 @@ jobs:
       - name: Download crate artifacts
         uses: actions/download-artifact@v8
         with:
-          pattern: '{rust-crate,rust-mcp-crate}-*'
+          pattern: '{rust-mcp-crate,rust-pii-crate}-*'
           path: crates
           merge-multiple: true
 
@@ -536,14 +580,22 @@ jobs:
       - name: List VSIX packages
         run: ls -la vsix
 
+      - name: Verify PAT for publisher (diagnostic)
+        if: env.VSCE_PAT != ''
+        run: |
+          set -euo pipefail
+          # Confirm the *CI* token is valid for the `fede2cr` publisher. If this
+          # fails, the stored secret differs from the token you verified locally
+          # (wrong/expired token or wrong account). If this passes but the
+          # publish below still 401s, the token lacks the Marketplace (Manage)
+          # scope required to publish. `verify-pat` reads the VSCE_PAT env var.
+          echo "VSCE_PAT length: ${#VSCE_PAT}"
+          npx --yes @vscode/vsce verify-pat fede2cr
+
       - name: Publish to VS Code Marketplace
         if: env.VSCE_PAT != ''
         run: |
           set -euo pipefail
-          # Sanity-check the secret without leaking it: report length only.
-          # A mismatch here (e.g. trailing newline/whitespace from a bad paste)
-          # is the most common cause of a 401 when the PAT itself is valid.
-          echo "VSCE_PAT length: ${#VSCE_PAT}"
           # vsce can publish all platform-specific packages in one invocation.
           # Pass the token explicitly with -p rather than relying on env pickup.
           npx --yes @vscode/vsce publish --no-dependencies -p "$VSCE_PAT" $(printf -- '--packagePath %s ' vsix/*.vsix)

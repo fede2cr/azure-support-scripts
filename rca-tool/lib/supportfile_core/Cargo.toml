@@ -31,6 +31,7 @@ cli = [
     "dep:zip",
     "dep:rayon",
     "dep:crossbeam-channel",
+    "dep:supportfile_pii_anonymizer",
 ]
 
 [dependencies]
@@ -51,5 +52,12 @@ zip = { version = "2", default-features = false, features = ["deflate"], optiona
 # in parallel and the per-thread `ArchiveResults` are merged in `reduce`.
 rayon = { version = "1", optional = true }
 crossbeam-channel = { version = "0.5", optional = true }
+# Always-on PII/environment anonymization for the engine's merged results.
+# Only needed by the `rca_cli`/engine path, so kept optional under `cli` (the
+# lean WASM/PyO3 library builds — which assemble results elsewhere — skip it).
+# The `version` is required so the crate can be published to crates.io; it is
+# kept in lockstep with this crate's version by
+# `.github/scripts/set-crate-version-from-tag.sh`.
+supportfile_pii_anonymizer = { path = "../supportfile_pii_anonymizer", version = "0.0.0", optional = true }
 
 
