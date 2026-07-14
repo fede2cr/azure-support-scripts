@@ -9,6 +9,7 @@
 #   - rca-tool/lib/supportfile_core    (published to crates.io as `supportfile`)
 #   - rca-tool/lib/supportfile_py      (built as a Python wheel)
 #   - rca-tool/lib/supportfile_wasm    (used by the Leptos front-end build)
+#   - rca-tool/lib/supportfile_mcp     (published to crates.io as `supportfile_mcp`)
 #
 # After updating Cargo.toml files, the corresponding Cargo.lock entries
 # are refreshed so subsequent `cargo --locked` invocations stay green.
@@ -46,6 +47,8 @@ declare -a crate_dirs=(
     "$repo_root/rca-tool/lib/supportfile_core"
     "$repo_root/rca-tool/lib/supportfile_py"
     "$repo_root/rca-tool/lib/supportfile_wasm"
+    "$repo_root/rca-tool/lib/supportfile_mcp"
+    "$repo_root/rca-tool/lib/supportfile_pii_anonymizer"
 )
 
 for dir in "${crate_dirs[@]}"; do
@@ -61,13 +64,28 @@ for dir in "${crate_dirs[@]}"; do
     echo "  updated $toml"
 done
 
+# Keep internal path-dependency version requirements in lockstep with the bumped
+# package version. `cargo publish` requires path deps to carry a version, and it
+# must match the just-published `supportfile_pii_anonymizer` version. Applies to
+# the crates that depend on it via path (supportfile_core is the published one;
+# supportfile_wasm carries no version pin, so it is skipped here).
+for consumer in supportfile_core; do
+    ctoml="$repo_root/rca-tool/lib/$consumer/Cargo.toml"
+    if grep -q 'supportfile_pii_anonymizer[[:space:]]*=' "$ctoml"; then
+        sed -i -E "s|(supportfile_pii_anonymizer[[:space:]]*=[[:space:]]*\{[^}]*version[[:space:]]*=[[:space:]]*\")[^\"]*(\")|\1$version\2|" "$ctoml"
+        echo "  synced $consumer dependency version -> $version"
+    fi
+done
+
 # Refresh Cargo.lock entries for the renamed packages so `cargo --locked`
 # continues to work in subsequent build/test/publish steps. Each crate has
 # its own lockfile; path dependencies don't hit the network.
 declare -A lock_updates=(
-    ["$repo_root/rca-tool/lib/supportfile_core"]="supportfile"
+    ["$repo_root/rca-tool/lib/supportfile_core"]="supportfile supportfile_pii_anonymizer"
     ["$repo_root/rca-tool/lib/supportfile_py"]="supportfile_py supportfile"
-    ["$repo_root/rca-tool/lib/supportfile_wasm"]="supportfile-wasm supportfile"
+    ["$repo_root/rca-tool/lib/supportfile_wasm"]="supportfile-wasm supportfile supportfile_pii_anonymizer"
+    ["$repo_root/rca-tool/lib/supportfile_mcp"]="supportfile_mcp"
+    ["$repo_root/rca-tool/lib/supportfile_pii_anonymizer"]="supportfile_pii_anonymizer"
 )
 
 for dir in "${!lock_updates[@]}"; do
