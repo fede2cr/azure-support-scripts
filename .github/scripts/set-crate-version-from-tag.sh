@@ -59,8 +59,10 @@ for dir in "${crate_dirs[@]}"; do
     fi
     # Replace the FIRST `version = "..."` line only (package version, not
     # dependency versions). Cargo convention places it in the [package]
-    # table at the top of the file.
-    sed -i -E "0,/^version[[:space:]]*=[[:space:]]*\".*\"/ s//version = \"$version\"/" "$toml"
+    # table at the top of the file. Use perl (identical on Linux and macOS)
+    # instead of sed, whose in-place flag and `0,/re/` address differ between
+    # GNU and BSD.
+    perl -0777 -i -pe 's/^version[ \t]*=[ \t]*".*"/version = "'"$version"'"/m' "$toml"
     echo "  updated $toml"
 done
 
@@ -72,7 +74,7 @@ done
 for consumer in supportfile_core; do
     ctoml="$repo_root/rca-tool/lib/$consumer/Cargo.toml"
     if grep -q 'supportfile_pii_anonymizer[[:space:]]*=' "$ctoml"; then
-        sed -i -E "s|(supportfile_pii_anonymizer[[:space:]]*=[[:space:]]*\{[^}]*version[[:space:]]*=[[:space:]]*\")[^\"]*(\")|\1$version\2|" "$ctoml"
+        perl -i -pe 's/(supportfile_pii_anonymizer[ \t]*=[ \t]*\{[^}]*version[ \t]*=[ \t]*")[^"]*(")/${1}'"$version"'${2}/' "$ctoml"
         echo "  synced $consumer dependency version -> $version"
     fi
 done
