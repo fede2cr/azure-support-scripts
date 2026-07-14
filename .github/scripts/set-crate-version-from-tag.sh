@@ -82,24 +82,35 @@ done
 # Refresh Cargo.lock entries for the renamed packages so `cargo --locked`
 # continues to work in subsequent build/test/publish steps. Each crate has
 # its own lockfile; path dependencies don't hit the network.
-declare -A lock_updates=(
-    ["$repo_root/rca-tool/lib/supportfile_core"]="supportfile supportfile_pii_anonymizer"
-    ["$repo_root/rca-tool/lib/supportfile_py"]="supportfile_py supportfile"
-    ["$repo_root/rca-tool/lib/supportfile_wasm"]="supportfile-wasm supportfile supportfile_pii_anonymizer"
-    ["$repo_root/rca-tool/lib/supportfile_mcp"]="supportfile_mcp"
-    ["$repo_root/rca-tool/lib/supportfile_pii_anonymizer"]="supportfile_pii_anonymizer"
-)
-
-for dir in "${!lock_updates[@]}"; do
-    pkgs="${lock_updates[$dir]}"
+#
+# NOTE: this deliberately avoids bash associative arrays (`declare -A`). The
+# GitHub macOS runners ship bash 3.2, which does not support them — the map
+# would silently collapse, the loop would skip every crate, and the stale
+# lockfiles would then break the subsequent `cargo build --locked`. A `case`
+# statement is portable back to bash 3.2.
+for dir in \
+    "$repo_root/rca-tool/lib/supportfile_core" \
+    "$repo_root/rca-tool/lib/supportfile_py" \
+    "$repo_root/rca-tool/lib/supportfile_wasm" \
+    "$repo_root/rca-tool/lib/supportfile_mcp" \
+    "$repo_root/rca-tool/lib/supportfile_pii_anonymizer"; do
+    case "$dir" in
+        */supportfile_core) pkgs="supportfile supportfile_pii_anonymizer" ;;
+        */supportfile_py) pkgs="supportfile_py supportfile" ;;
+        */supportfile_wasm) pkgs="supportfile-wasm supportfile supportfile_pii_anonymizer" ;;
+        */supportfile_mcp) pkgs="supportfile_mcp" ;;
+        */supportfile_pii_anonymizer) pkgs="supportfile_pii_anonymizer" ;;
+        *) pkgs="" ;;
+    esac
+    [[ -n "$pkgs" ]] || continue
     if [[ -f "$dir/Cargo.lock" ]]; then
         args=()
         for p in $pkgs; do
             args+=(-p "$p")
         done
         echo "  refreshing $dir/Cargo.lock for: $pkgs"
-        (cd "$dir" && cargo update "${args[@]}" --offline 2>/dev/null \
-            || cd "$dir" && cargo update "${args[@]}")
+        (cd "$dir" && cargo update "${args[@]}" --offline 2>/dev/null) \
+            || (cd "$dir" && cargo update "${args[@]}")
     fi
 done
 
