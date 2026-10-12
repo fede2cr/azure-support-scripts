@@ -16,6 +16,7 @@ use super::sections::merge_errors::MergeErrorsSection;
 use super::sections::networking::NetworkingSection;
 use super::sections::oom::OomSection;
 use super::sections::os_tuning::OsTuningSection;
+use super::sections::selinux::SelinuxSection;
 use super::sections::services::ServicesAntivirusSection;
 use super::sections::storage::{InspectDiskSection, StorageSection};
 
@@ -98,6 +99,7 @@ pub fn AnalysisView(result: ReadSignal<WorkerResult>) -> impl IntoView {
                     <AzureExtensionsSection data=json.clone()/>
                     <KernelSection data=json.clone()/>
                     <OsTuningSection data=json.clone()/>
+                    <SelinuxSection data=json.clone()/>
                     <StorageSection data=json.clone()/>
                     <HanaSection data=json.clone()/>
                     <DeadlocksSection data=json.clone()/>

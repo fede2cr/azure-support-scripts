@@ -102,6 +102,84 @@ pub fn parsers() -> Vec<ParserSpec> {
             func: crate::parse_cluster_maintenance_mode_json,
             multi_file: false,
         },
+        ParserSpec {
+            name: "clusterNodes",
+            pattern: r"/(ha\.txt|pacemaker\.log|corosync\.conf|cib\.xml|crm_mon.*\.txt)$",
+            func: crate::parse_cluster_nodes_json,
+            multi_file: false,
+        },
+        ParserSpec {
+            name: "clusterDaemonStatus",
+            pattern: r"/pcs_status|/ha\.txt$",
+            func: crate::parse_cluster_daemon_status_json,
+            multi_file: false,
+        },
+        ParserSpec {
+            name: "corosyncStatus",
+            pattern: r"corosync-cfgtool.*-s$",
+            func: crate::parse_corosync_status_json,
+            multi_file: false,
+        },
+        ParserSpec {
+            name: "hostsFile",
+            pattern: r"/(network\.txt|etc/hosts|etc_hosts)$|/[^/]+/(hosts)$",
+            func: crate::parse_hosts_file_json,
+            multi_file: false,
+        },
+        ParserSpec {
+            name: "pacemakerResources",
+            pattern: r"cib\.xml$|/crm_mon.*\.txt$|/crm.*config$|pacemaker\.log$|/ha\.txt$|/pcs_config$|/pcs_status",
+            func: crate::parse_pacemaker_resources_json,
+            multi_file: false,
+        },
+        ParserSpec {
+            name: "azureScheduledEvents",
+            pattern: r"/pcs_status.*|/crm_mon.*|cib\.xml$",
+            func: crate::parse_azure_scheduled_events_json,
+            multi_file: false,
+        },
+        ParserSpec {
+            name: "fencingConfig",
+            pattern: r"cib\.xml$|/crm_mon.*\.txt$|/crm.*config$|stonith|/ha\.txt$|/pcs_config$|/pcs_property",
+            func: crate::parse_fencing_config_json,
+            multi_file: false,
+        },
+        ParserSpec {
+            name: "sbdConfig",
+            pattern: r"/sbd$|/sysconfig/sbd|/ha\.txt$",
+            func: crate::parse_sbd_config_json,
+            multi_file: false,
+        },
+        ParserSpec {
+            name: "azureFenceAuth",
+            pattern: r"cib\.xml$|/ha\.txt$|/crm.*config$",
+            func: crate::parse_azure_fence_auth_json,
+            multi_file: false,
+        },
+        ParserSpec {
+            name: "liveMigration",
+            pattern: r"/(pacemaker\.log|corosync\.log|cluster\.log|ha-log|messages|localmessages|journalctl[^/]*)(?:[.-]\d+)?(?:\.txt)?$",
+            func: crate::parse_live_migration_json,
+            multi_file: false,
+        },
+        ParserSpec {
+            name: "sapInstanceConfig",
+            pattern: r"/pcs_config|/cib\.xml$",
+            func: crate::parse_sap_instance_config_json,
+            multi_file: false,
+        },
+        ParserSpec {
+            name: "sapInstanceErrors",
+            pattern: r"/analysis\.txt$|/cluster-log\.txt$|/messages|/var/log/messages",
+            func: crate::parse_sap_instance_errors_json,
+            multi_file: false,
+        },
+        ParserSpec {
+            name: "iscsiConfig",
+            pattern: r"fs-iscsi\.txt$|/iscsi/|/iscsiadm|/ha\.txt$|initiatorname\.iscsi$",
+            func: crate::parse_iscsi_config_json,
+            multi_file: false,
+        },
         // ----- Automation -------------------------------------------------
         ParserSpec {
             name: "automationEvents",
@@ -209,6 +287,12 @@ pub fn parsers() -> Vec<ParserSpec> {
             func: crate::parse_network_sysctl_json,
             multi_file: true,
         },
+        ParserSpec {
+            name: "nsswitchConfig",
+            pattern: r"etc/nsswitch\.conf$|/nsswitch\.conf$|network\.txt$",
+            func: crate::parse_nsswitch_json,
+            multi_file: false,
+        },
         // ----- Packages ---------------------------------------------------
         ParserSpec {
             name: "distroPackages",
@@ -239,6 +323,18 @@ pub fn parsers() -> Vec<ParserSpec> {
             name: "guardicoreAgent",
             pattern: r"(?:sos_commands/systemd/systemctl_list-unit-files|systemd-status\.txt)$",
             func: crate::parse_guardicore_agent_json,
+            multi_file: false,
+        },
+        ParserSpec {
+            name: "puppetAgent",
+            pattern: r"(?:sos_commands/systemd/systemctl_list-unit-files|systemd-status\.txt)$",
+            func: crate::parse_puppet_agent_json,
+            multi_file: false,
+        },
+        ParserSpec {
+            name: "chefClient",
+            pattern: r"(?:sos_commands/systemd/systemctl_list-unit-files|systemd-status\.txt)$",
+            func: crate::parse_chef_client_json,
             multi_file: false,
         },
         ParserSpec {
@@ -290,6 +386,12 @@ pub fn parsers() -> Vec<ParserSpec> {
             multi_file: false,
         },
         // ----- Storage ----------------------------------------------------
+        ParserSpec {
+            name: "nvmeList",
+            pattern: r"sos_commands/nvme/nvme_list$",
+            func: crate::parse_nvme_list_json,
+            multi_file: false,
+        },
         ParserSpec {
             name: "lvmConfig",
             pattern: r"/(lvm\.txt|pvs\.txt|vgs\.txt|lvs\.txt|pvdisplay|vgdisplay|lvdisplay)$|/lvm2/pvs_|/lvm2/vgs_|/lvm2/lvs_",
@@ -488,6 +590,12 @@ pub fn parsers() -> Vec<ParserSpec> {
             func: crate::parse_kernel_cmdline_json,
             multi_file: false,
         },
+        ParserSpec {
+            name: "secureBoot",
+            pattern: r"sos_commands/boot/mokutil_--sb-state$",
+            func: crate::parse_secure_boot_json,
+            multi_file: false,
+        },
         // ----- OS tuning (SAP-on-Azure QualityCheck ports) ---------------
         ParserSpec {
             name: "tunedProfile",
@@ -500,6 +608,12 @@ pub fn parsers() -> Vec<ParserSpec> {
             pattern: r"/etc/selinux/config$|sos_commands/selinux/sestatus$|/selinux\.txt$",
             func: crate::parse_selinux_json,
             multi_file: false,
+        },
+        ParserSpec {
+            name: "selinuxErrors",
+            pattern: r"/(audit\.log|messages|localmessages|journalctl[^/]*)(?:[.-]\d+)?(?:\.txt)?(?:\.gz)?$|sos_commands/selinux/(ausearch|sealert)[^/]*$|/selinux\.txt$",
+            func: crate::parse_selinux_errors_json,
+            multi_file: true,
         },
         ParserSpec {
             name: "swapSpace",
@@ -663,41 +777,79 @@ fn value_is_empty(v: &Value) -> bool {
     }
 }
 
-/// Combine two `ArchiveResults` (typically one per worker thread) into one.
+/// Worker-local accumulator for the parallel tar path.
+///
+/// Rayon decides at runtime which archive member lands on which worker, so
+/// neither the partitioning nor the reduce order is reproducible. This struct
+/// keeps the tar ordinal alongside every result, which is enough to rebuild the
+/// exact outcome of a sequential walk once all workers are done.
+#[derive(Default)]
+struct PartialResults {
+    base: ArchiveResults,
+    /// Ordinal of the entry that produced each single-file parser result.
+    single_ord: HashMap<String, usize>,
+    /// `multi_file` values held back so they can be merged in archive order.
+    multi: HashMap<String, BTreeMap<usize, Value>>,
+}
+
+impl PartialResults {
+    /// Replay the deferred `multi_file` values in tar order.
+    fn finish(mut self) -> ArchiveResults {
+        for (key, by_ordinal) in self.multi {
+            let merged = by_ordinal.into_values().fold(Value::Null, merge);
+            self.base.parser_results.insert(key, merged);
+        }
+        self.base
+    }
+}
+
+/// Combine two [`PartialResults`] (typically one per worker thread) into one.
 ///
 /// - Numeric counters and the `file_types` histogram are summed.
-/// - `parser_results` are merged per parser according to its registry entry:
-///   `multi_file` parsers go through [`merge`] (deep array concatenation /
-///   counter sums); single-file parsers prefer the non-empty value, matching
-///   the sequential semantics in [`process_entry`].
-fn merge_archive_results(
-    multi_file_lookup: &HashMap<&str, bool>,
-    mut a: ArchiveResults,
-    b: ArchiveResults,
-) -> ArchiveResults {
-    a.file_count += b.file_count;
-    a.matched_files += b.matched_files;
-    for (k, v) in b.file_types {
-        *a.file_types.entry(k).or_insert(0) += v;
+/// - `multi_file` values are pooled by ordinal and merged later in [`PartialResults::finish`].
+/// - Single-file results are resolved by ordinal, matching the sequential
+///   semantics in [`process_entry`]: a non-empty result always beats an empty
+///   one, otherwise the later entry wins among non-empty results and the
+///   earlier one wins among empty results.
+fn merge_archive_results(a: PartialResults, b: PartialResults) -> PartialResults {
+    let mut a = a;
+    let PartialResults {
+        base: b_base,
+        single_ord: ord_b,
+        multi: multi_b,
+    } = b;
+
+    a.base.file_count += b_base.file_count;
+    a.base.matched_files += b_base.matched_files;
+    for (k, v) in b_base.file_types {
+        *a.base.file_types.entry(k).or_insert(0) += v;
     }
-    for (key, val_b) in b.parser_results {
-        match a.parser_results.remove(&key) {
+    for (key, by_ordinal) in multi_b {
+        a.multi.entry(key).or_default().extend(by_ordinal);
+    }
+    for (key, val_b) in b_base.parser_results {
+        let ob = ord_b.get(&key).copied().unwrap_or(usize::MAX);
+        match a.base.parser_results.remove(&key) {
             None => {
-                a.parser_results.insert(key, val_b);
+                a.base.parser_results.insert(key.clone(), val_b);
+                a.single_ord.insert(key, ob);
             }
             Some(val_a) => {
-                let is_multi = multi_file_lookup
-                    .get(key.as_str())
-                    .copied()
-                    .unwrap_or(false);
-                let merged = if is_multi {
-                    merge(val_a, val_b)
-                } else if value_is_empty(&val_b) {
-                    val_a
+                let (empty_a, empty_b) = (value_is_empty(&val_a), value_is_empty(&val_b));
+                let oa = a.single_ord.get(&key).copied().unwrap_or(usize::MAX);
+                let take_b = if empty_a != empty_b {
+                    empty_a
+                } else if empty_a {
+                    ob < oa
                 } else {
-                    val_b
+                    ob > oa
                 };
-                a.parser_results.insert(key, merged);
+                if take_b {
+                    a.base.parser_results.insert(key.clone(), val_b);
+                    a.single_ord.insert(key, ob);
+                } else {
+                    a.base.parser_results.insert(key, val_a);
+                }
             }
         }
     }
@@ -887,9 +1039,11 @@ fn process_entry(
     content: &str,
     specs: &[ParserSpec],
     active: &[CompiledParser],
-    results: &mut ArchiveResults,
+    acc: &mut PartialResults,
+    ordinal: usize,
     debug: bool,
 ) {
+    let results = &mut acc.base;
     results.file_count += 1;
     let ext = Path::new(member_path)
         .extension()
@@ -949,16 +1103,17 @@ fn process_entry(
         let spec = &specs[spec_index];
         let key = spec.name.to_string();
         if spec.multi_file {
-            let prev = results.parser_results.remove(&key).unwrap_or(Value::Null);
-            results.parser_results.insert(key, merge(prev, parsed));
+            // Deferred: merged in archive order once all workers have finished.
+            acc.multi.entry(key).or_default().insert(ordinal, parsed);
         } else {
             let is_empty = match &parsed {
                 Value::Object(o) => !o.get("found").and_then(Value::as_bool).unwrap_or(false),
                 Value::Array(a) => a.is_empty(),
                 _ => false,
             };
-            if !results.parser_results.contains_key(&key) || !is_empty {
-                results.parser_results.insert(key, parsed);
+            if !acc.base.parser_results.contains_key(&key) || !is_empty {
+                acc.base.parser_results.insert(key.clone(), parsed);
+                acc.single_ord.insert(key, ordinal);
             }
         }
     }
@@ -1035,12 +1190,16 @@ fn process_archive_inner(
         }
     }
 
-    let mut results = ArchiveResults {
-        file_count: 0,
-        matched_files: 0,
-        parser_results: BTreeMap::new(),
-        file_types: BTreeMap::new(),
+    let mut results = PartialResults {
+        base: ArchiveResults {
+            file_count: 0,
+            matched_files: 0,
+            parser_results: BTreeMap::new(),
+            file_types: BTreeMap::new(),
+        },
+        ..Default::default()
     };
+    let mut ordinal = 0usize;
 
     if detect_format(path) == "zip" {
         let file = File::open(path).map_err(|e| format!("opening {}: {e}", path.display()))?;
@@ -1066,7 +1225,7 @@ fn process_archive_inner(
                 .or_else(|| name.strip_suffix(".xz"))
                 .unwrap_or(&name);
             if !any_parser_matches(&name, &active) && !any_parser_matches(candidate, &active) {
-                record_skipped(&name, &mut results);
+                record_skipped(&name, &mut results.base);
                 continue;
             }
             let mut buf = Vec::new();
@@ -1084,10 +1243,12 @@ fn process_archive_inner(
                 &specs,
                 &active,
                 &mut results,
+                ordinal,
                 debug,
             );
+            ordinal += 1;
         }
-        return Ok(results);
+        return Ok(results.finish());
     }
 
     if detect_format(path) == "plaintext" {
@@ -1111,8 +1272,16 @@ fn process_archive_inner(
         // like `/(messages|localmessages|...)` match while the original
         // filename remains visible in the file inventory.
         let synthetic = format!("{original_name}/messages");
-        process_entry(&synthetic, &content, &specs, &active, &mut results, debug);
-        return Ok(results);
+        process_entry(
+            &synthetic,
+            &content,
+            &specs,
+            &active,
+            &mut results,
+            0,
+            debug,
+        );
+        return Ok(results.finish());
     }
 
     // ---- Tar branch (parallel) -------------------------------------------
@@ -1125,16 +1294,16 @@ fn process_archive_inner(
     // pool via `par_bridge` + `fold` + `reduce`.
     let active = Arc::new(active);
     let specs = Arc::new(specs);
-    let multi_file_lookup: HashMap<&str, bool> =
-        specs.iter().map(|s| (s.name, s.multi_file)).collect();
 
     let workers = rayon::current_num_threads().max(1);
-    let (tx, rx) = bounded::<(String, Vec<u8>)>(workers * 4);
+    let (tx, rx) = bounded::<(usize, String, Vec<u8>)>(workers * 4);
 
     let path_for_reader = path.to_path_buf();
     let active_for_reader = Arc::clone(&active);
     let reader_handle = std::thread::spawn(move || -> Result<ArchiveResults, String> {
         let mut local = ArchiveResults::default();
+        // Position in the tar, so workers can reconstruct sequential ordering.
+        let mut ordinal = 0usize;
         let reader = open_tar_reader(&path_for_reader)
             .map_err(|e| format!("opening {}: {e}", path_for_reader.display()))?;
         let mut archive = Archive::new(reader);
@@ -1175,9 +1344,10 @@ fn process_archive_inner(
                 }
                 continue;
             }
-            if tx.send((path_in_tar, buf)).is_err() {
+            if tx.send((ordinal, path_in_tar, buf)).is_err() {
                 break;
             }
+            ordinal += 1;
         }
         // Dropping `tx` here closes the channel so the workers' iterator
         // terminates and `reduce` can return.
@@ -1187,10 +1357,10 @@ fn process_archive_inner(
 
     let active_for_workers = Arc::clone(&active);
     let specs_for_workers = Arc::clone(&specs);
-    let worker_results: ArchiveResults = rx
+    let worker_results = rx
         .into_iter()
         .par_bridge()
-        .fold(ArchiveResults::default, |mut acc, (name, buf)| {
+        .fold(PartialResults::default, |mut acc, (ordinal, name, buf)| {
             let (logical_name, raw) = maybe_decompress_inner(name, buf, debug);
             let content = bytes_to_string(raw);
             process_entry(
@@ -1199,20 +1369,27 @@ fn process_archive_inner(
                 &specs_for_workers,
                 &active_for_workers,
                 &mut acc,
+                ordinal,
                 debug,
             );
             acc
         })
-        .reduce(ArchiveResults::default, |a, b| {
-            merge_archive_results(&multi_file_lookup, a, b)
-        });
+        .reduce(PartialResults::default, merge_archive_results);
 
     let reader_results = reader_handle
         .join()
         .map_err(|_| "reader thread panicked".to_string())??;
-    let merged = merge_archive_results(&multi_file_lookup, reader_results, worker_results);
+    // The reader only contributes skipped-file bookkeeping, so it carries no
+    // parser results and needs no ordinals of its own.
+    let merged = merge_archive_results(
+        PartialResults {
+            base: reader_results,
+            ..Default::default()
+        },
+        worker_results,
+    );
 
-    Ok(merged)
+    Ok(merged.finish())
 }
 
 /// Analyze an archive (or plaintext log) and return the combined JSON value

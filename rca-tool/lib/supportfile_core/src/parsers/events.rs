@@ -106,6 +106,32 @@ pub struct XfsErrorsResult {
     pub source_path: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SelinuxErrorEvent {
+    pub timestamp: String,
+    pub line_number: usize,
+    pub event_type: String,
+    pub permissions: Vec<String>,
+    pub pid: Option<String>,
+    pub command: Option<String>,
+    pub path: Option<String>,
+    pub source_context: Option<String>,
+    pub target_context: Option<String>,
+    pub target_class: Option<String>,
+    pub raw_line: String,
+    pub source_path: String,
+    pub source_line: Option<usize>,
+    pub source_line_end: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SelinuxErrorsResult {
+    pub found: bool,
+    pub count: usize,
+    pub events: Vec<SelinuxErrorEvent>,
+    pub source_path: String,
+}
+
 pub fn parse_emergency_mode(content: &str, source_path: &str) -> EmergencyModeResult {
     static EMERGENCY_RE: OnceLock<Regex> = OnceLock::new();
     let emergency_re =
@@ -404,6 +430,81 @@ pub fn parse_xfs_errors(content: &str, source_path: &str) -> XfsErrorsResult {
     }
 }
 
+pub fn parse_selinux_errors(content: &str, source_path: &str) -> SelinuxErrorsResult {
+    let audit_type_re = crate::cached_regex!(r"(?i)\btype=(AVC|USER_AVC|SELINUX_ERR|USER_SELINUX_ERR)\b");
+    let avc_re = crate::cached_regex!(r"(?i)\bavc:\s+(denied|granted)\b");
+    let permissions_re = crate::cached_regex!(r"(?i)\bavc:\s+(?:denied|granted)\s*\{\s*([^}]*)\}");
+    let audit_timestamp_re = crate::cached_regex!(r"\baudit\(([^)]+)\)");
+    let mut events = Vec::new();
+
+    for (index, line) in content.lines().enumerate() {
+        let audit_type = audit_type_re
+            .captures(line)
+            .and_then(|captures| captures.get(1).map(|value| value.as_str().to_ascii_uppercase()));
+        let avc_action = avc_re
+            .captures(line)
+            .and_then(|captures| captures.get(1).map(|value| value.as_str().to_ascii_lowercase()));
+        if audit_type.is_none() && avc_action.is_none() {
+            continue;
+        }
+
+        let line_number = index + 1;
+        let attribute = |name: &str| -> Option<String> {
+            let pattern = format!(r#"\b{}=(?:\"([^\"]*)\"|([^\s]+))"#, regex::escape(name));
+            Regex::new(&pattern).ok()?.captures(line).and_then(|captures| {
+                captures
+                    .get(1)
+                    .or_else(|| captures.get(2))
+                    .map(|value| value.as_str().trim_end_matches(',').to_string())
+            })
+        };
+        let permissions = permissions_re
+            .captures(line)
+            .and_then(|captures| captures.get(1))
+            .map(|value| {
+                value
+                    .as_str()
+                    .split_whitespace()
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let timestamp = extract_timestamp(line)
+            .or_else(|| {
+                audit_timestamp_re
+                    .captures(line)
+                    .and_then(|captures| captures.get(1).map(|value| value.as_str().to_string()))
+            })
+            .unwrap_or_else(|| "Unknown".to_string());
+
+        events.push(SelinuxErrorEvent {
+            timestamp,
+            line_number,
+            event_type: audit_type.unwrap_or_else(|| {
+                format!("AVC_{}", avc_action.unwrap_or_else(|| "error".to_string()).to_ascii_uppercase())
+            }),
+            permissions,
+            pid: attribute("pid"),
+            command: attribute("comm"),
+            path: attribute("path").or_else(|| attribute("name")),
+            source_context: attribute("scontext"),
+            target_context: attribute("tcontext"),
+            target_class: attribute("tclass"),
+            raw_line: line.trim().to_string(),
+            source_path: source_path.to_string(),
+            source_line: Some(line_number),
+            source_line_end: Some(line_number),
+        });
+    }
+
+    SelinuxErrorsResult {
+        found: !events.is_empty(),
+        count: events.len(),
+        events,
+        source_path: source_path.to_string(),
+    }
+}
+
 pub fn parse_emergency_mode_json(content: &str, source_path: &str) -> String {
     serde_json::to_string(&parse_emergency_mode(content, source_path))
         .unwrap_or_else(|_| "{}".to_string())
@@ -421,6 +522,11 @@ pub fn parse_oom_killer_json(content: &str, source_path: &str) -> String {
 
 pub fn parse_xfs_errors_json(content: &str, source_path: &str) -> String {
     serde_json::to_string(&parse_xfs_errors(content, source_path))
+        .unwrap_or_else(|_| "{}".to_string())
+}
+
+pub fn parse_selinux_errors_json(content: &str, source_path: &str) -> String {
+    serde_json::to_string(&parse_selinux_errors(content, source_path))
         .unwrap_or_else(|_| "{}".to_string())
 }
 
@@ -467,6 +573,26 @@ mod tests {
         let result = parse_xfs_errors(input, PATH);
         assert_eq!(result.count, 1);
         assert_eq!(result.events[0].device, "sdd1");
+    }
+
+    #[test]
+    fn detects_selinux_errors_without_sealert_recommendations() {
+        let input = concat!(
+            "SELinux is preventing /usr/bin/httpd from name_connect access.\n",
+            "*****  Plugin catchall (100. confidence) suggests  *******************\n",
+            "If you believe that httpd should be allowed, generate a policy module.\n",
+            "type=AVC msg=audit(1722500000.123:42): avc:  denied  { name_connect } for  pid=123 comm=\"httpd\" path=\"/var/www\" scontext=system_u:system_r:httpd_t:s0 tcontext=system_u:object_r:http_port_t:s0 tclass=tcp_socket permissive=0\n"
+        );
+        let result = parse_selinux_errors(input, "var/log/audit/audit.log");
+
+        assert_eq!(result.count, 1);
+        assert_eq!(result.events[0].source_line, Some(4));
+        assert_eq!(result.events[0].source_path, "var/log/audit/audit.log");
+        assert_eq!(result.events[0].permissions, vec!["name_connect"]);
+        assert_eq!(result.events[0].command.as_deref(), Some("httpd"));
+        let json = parse_selinux_errors_json(input, "var/log/audit/audit.log");
+        assert!(!json.contains("suggests"));
+        assert!(!json.contains("generate a policy module"));
     }
 
     #[test]

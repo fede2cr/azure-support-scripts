@@ -278,6 +278,22 @@ function deduplicateEvents(existingEvents, newEvents, comparisonFields, logFn) {
     };
 }
 
+// Rules that merge their results across every file they match, so they can also
+// be fed successive windows of one very large file without losing earlier hits.
+const MULTI_FILE_RULES = new Set([
+    'liveMigration', 'kernelReboots', 'oomKiller', 'xfsErrors', 'selinuxErrors',
+    'emergencyMode', 'sshService', 'automation', 'clusterEvents', 'highCpuEvents',
+    'rhuiErrors', 'blockDevices', 'sapInstanceErrors', 'firewallRules',
+    'networkInterfaces', 'vmcore', 'azureExtensions', 'lvmConfig', 'kernelTuning',
+    'nfsMounts', 'hanaSavepoints', 'hanaDeadlocks', 'hanaOom', 'hanaMergeErrors'
+]);
+
+// A ZIP entry larger than this is handed to the parsers in newline-aligned
+// windows of this size instead of one buffer. TextDecoder cannot produce a
+// string above V8's ~512 MB limit, and multi-GB entries exceed the ArrayBuffer
+// limit outright, so the whole file is analysed window by window.
+const ZIP_WINDOW_BYTES = 32 * 1024 * 1024;
+
 // Runtime imports
 if (typeof importScripts === 'function') {
     // Import pako for gzip decompression of nested .gz files
@@ -577,6 +593,9 @@ if (typeof oomKillerParser !== 'undefined') {
 if (typeof xfsErrorsParser !== 'undefined') {
     SCC_RULES.xfsErrors = xfsErrorsParser;
 }
+if (typeof selinuxErrorsParser !== 'undefined') {
+    SCC_RULES.selinuxErrors = selinuxErrorsParser;
+}
 
 // From parsers/azure.js
 if (typeof azureVMPropertiesParser !== 'undefined') {
@@ -608,6 +627,7 @@ if (typeof createClusterParsers !== 'undefined') {
     SCC_RULES.clusterDaemonStatus = clusterParsers.clusterDaemonStatus;
     SCC_RULES.azureScheduledEvents = clusterParsers.azureScheduledEvents;
     SCC_RULES.fencingConfig = clusterParsers.fencingConfig;
+    SCC_RULES.highCpuEvents = clusterParsers.highCpuEvents;
     SCC_RULES.clusterEvents = clusterParsers.clusterEvents;
     SCC_RULES.liveMigration = clusterParsers.liveMigration;
     SCC_RULES.sapInstanceConfig = clusterParsers.sapInstanceConfig;
@@ -714,6 +734,9 @@ if (typeof ringBufferParser !== 'undefined') {
 }
 if (typeof networkSysctlParser !== 'undefined') {
     SCC_RULES.networkSysctl = networkSysctlParser;
+}
+if (typeof nsswitchConfigParser !== 'undefined') {
+    SCC_RULES.nsswitchConfig = nsswitchConfigParser;
 }
 
 // From parsers/network-interfaces.js
@@ -1477,7 +1500,7 @@ class IncrementalTARParser {
                         
                         // For rules that process multiple files (like liveMigration, kernelReboots, oomKiller, xfsErrors, emergencyMode, sshService, automation, clusterEvents, rhuiErrors, blockDevices, sapInstanceErrors, firewallRules, azureExtensions, and kernelTuning)
                         // we need to accumulate results instead of replacing
-                        const isMultiFileRule = ruleName === 'liveMigration' || ruleName === 'kernelReboots' || ruleName === 'oomKiller' || ruleName === 'xfsErrors' || ruleName === 'emergencyMode' || ruleName === 'sshService' || ruleName === 'automation' || ruleName === 'clusterEvents' || ruleName === 'rhuiErrors' || ruleName === 'blockDevices' || ruleName === 'sapInstanceErrors' || ruleName === 'firewallRules' || ruleName === 'networkInterfaces' || ruleName === 'vmcore' || ruleName === 'azureExtensions' || ruleName === 'lvmConfig' || ruleName === 'kernelTuning' || ruleName === 'nfsMounts' || ruleName === 'hanaSavepoints' || ruleName === 'hanaDeadlocks' || ruleName === 'hanaOom' || ruleName === 'hanaMergeErrors';
+                        const isMultiFileRule = ruleName === 'liveMigration' || ruleName === 'kernelReboots' || ruleName === 'oomKiller' || ruleName === 'xfsErrors' || ruleName === 'selinuxErrors' || ruleName === 'emergencyMode' || ruleName === 'sshService' || ruleName === 'automation' || ruleName === 'clusterEvents' || ruleName === 'highCpuEvents' || ruleName === 'rhuiErrors' || ruleName === 'blockDevices' || ruleName === 'sapInstanceErrors' || ruleName === 'firewallRules' || ruleName === 'networkInterfaces' || ruleName === 'vmcore' || ruleName === 'azureExtensions' || ruleName === 'lvmConfig' || ruleName === 'kernelTuning' || ruleName === 'nfsMounts' || ruleName === 'hanaSavepoints' || ruleName === 'hanaDeadlocks' || ruleName === 'hanaOom' || ruleName === 'hanaMergeErrors';
                         
                         // NOTE: We don't store file content in extractedFiles anymore to save memory
                         // Content is parsed immediately and discarded
@@ -1586,7 +1609,7 @@ class IncrementalTARParser {
                                     debugLog(`[TAR Parser] Rule 'vmcore' accumulated from ${filename} (crashes: ${this.analysisResults[ruleName].crashes.length})`);
                                 }
                                 // For kernelReboots, xfsErrors, emergencyMode, sshService, automation, clusterEvents, rhuiErrors, sapInstanceErrors, firewallRules, networkInterfaces, and azureExtensions, deduplicate events based on timestamp and relevant fields
-                                else if (ruleName === 'kernelReboots' || ruleName === 'xfsErrors' || ruleName === 'emergencyMode' || ruleName === 'sshService' || ruleName === 'automation' || ruleName === 'clusterEvents' || ruleName === 'rhuiErrors' || ruleName === 'sapInstanceErrors' || ruleName === 'firewallRules' || ruleName === 'networkInterfaces' || ruleName === 'azureExtensions') {
+                                else if (ruleName === 'kernelReboots' || ruleName === 'xfsErrors' || ruleName === 'emergencyMode' || ruleName === 'sshService' || ruleName === 'automation' || ruleName === 'clusterEvents' || ruleName === 'highCpuEvents' || ruleName === 'rhuiErrors' || ruleName === 'sapInstanceErrors' || ruleName === 'firewallRules' || ruleName === 'networkInterfaces' || ruleName === 'azureExtensions') {
                                     // Define comparison fields for each rule type
                                     const comparisonFields = ruleName === 'kernelReboots' 
                                         ? ['timestamp', 'type', 'kernelVersion']
@@ -1600,6 +1623,8 @@ class IncrementalTARParser {
                                         ? ['timestamp', 'toolType', 'command']
                                         : ruleName === 'azureExtensions'
                                         ? ['name']
+                                        : ruleName === 'highCpuEvents'
+                                        ? ['timestamp', 'rawLine']
                                         : null; // clusterEvents handled separately below
                                     
                                     if (ruleName === 'clusterEvents') {
@@ -2066,13 +2091,16 @@ class IncrementalTARParser {
      * This reuses the same parser matching and result accumulation logic as processSCCRules
      * but accepts already-decoded string content instead of reading from the TAR buffer.
      * @param {string} filename - The file path within the archive
-     * @param {Uint8Array} contentBytes - Raw file bytes
+     * @param {Uint8Array} contentBytes - Raw file bytes, or one newline-aligned window of them
+     * @param {{index: number, isLast: boolean}} [chunkInfo] - Set when the file is streamed in windows
+     * @returns {boolean|undefined} false when the file was skipped by the rotation limiter
      */
-    processExtractedFile(filename, contentBytes) {
+    processExtractedFile(filename, contentBytes, chunkInfo) {
         // Track current file for progress reporting
         this.currentFile = filename;
 
         const size = contentBytes.length;
+        const isFirstPart = !chunkInfo || chunkInfo.index === 0;
 
         // Detect SCC report
         if (!this.isSCCReport && SCC_RULES.detection.isSCCReport(filename)) {
@@ -2087,22 +2115,24 @@ class IncrementalTARParser {
             debugLog('[ZIP Parser] Detected HANA trace file:', filename);
         }
 
-        // Track directories
-        if (filename.includes('/')) {
-            const parts = filename.split('/');
-            let path = '';
-            for (let i = 0; i < parts.length - 1; i++) {
-                path += parts[i] + '/';
-                this.addDirectory(path);
+        if (isFirstPart) {
+            // Track directories
+            if (filename.includes('/')) {
+                const parts = filename.split('/');
+                let path = '';
+                for (let i = 0; i < parts.length - 1; i++) {
+                    path += parts[i] + '/';
+                    this.addDirectory(path);
+                }
             }
+
+            // Track file types
+            const ext = filename.includes('.') ? filename.split('.').pop().toLowerCase() : 'none';
+            this.fileTypes[ext] = (this.fileTypes[ext] || 0) + 1;
+
+            // Store file entry (bounded; counts all, retains first N)
+            this.recordFile(filename, size, filename.endsWith('/') ? 53 : 48);
         }
-
-        // Track file types
-        const ext = filename.includes('.') ? filename.split('.').pop().toLowerCase() : 'none';
-        this.fileTypes[ext] = (this.fileTypes[ext] || 0) + 1;
-
-        // Store file entry (bounded; counts all, retains first N)
-        this.recordFile(filename, size, filename.endsWith('/') ? 53 : 48);
 
         // Skip directories and empty files
         if (size === 0 || filename.endsWith('/')) return;
@@ -2138,7 +2168,7 @@ class IncrementalTARParser {
             this.processedLogFiles = {};
         }
         const compressedRotationMatch = matchFilename.match(/\/(messages|localmessages|journalctl[^/]*|pacemaker\.log|corosync\.log)([.-]\d+)?(?:\.gz|\.bz2|\.xz)$/);
-        if (compressedRotationMatch) {
+        if (compressedRotationMatch && isFirstPart) {
             const baseFile = compressedRotationMatch[1];
             const rotation = compressedRotationMatch[2] || '.current';
             if (!this.processedLogFiles[baseFile]) this.processedLogFiles[baseFile] = [];
@@ -2147,13 +2177,13 @@ class IncrementalTARParser {
             );
             if (!needsAllRotations && this.processedLogFiles[baseFile].length >= 3) {
                 debugLog('[ZIP Parser] Skipping compressed rotated log (limit reached):', matchFilename);
-                return;
+                return false;
             }
             this.processedLogFiles[baseFile].push(rotation);
         }
 
         // Track .gz files
-        if (matchFilename.toLowerCase().endsWith('.gz')) {
+        if (isFirstPart && matchFilename.toLowerCase().endsWith('.gz')) {
             this.nestedGzipTotalCount++;
             this.nestedGzipTotalCompressedBytes += size;
         }
@@ -2198,6 +2228,11 @@ class IncrementalTARParser {
             if (ruleName === 'detection' || !rule.filePattern) continue;
             if (!rule.filePattern.test(matchFilename)) continue;
 
+            const isMultiFileRule = MULTI_FILE_RULES.has(ruleName);
+            // Only merging rules can consume the later windows of a streamed file;
+            // replacing rules would drop what the earlier windows found.
+            if (!isFirstPart && !isMultiFileRule) continue;
+
             debugLog('[ZIP Parser] Matched rule', ruleName, 'for file:', matchFilename);
 
             if (pt && fileParserCount === 0) pt.startFile();
@@ -2211,8 +2246,6 @@ class IncrementalTARParser {
             }
 
             if (!cachedLines) cachedLines = content.split('\n');
-
-            const isMultiFileRule = ruleName === 'liveMigration' || ruleName === 'kernelReboots' || ruleName === 'oomKiller' || ruleName === 'xfsErrors' || ruleName === 'emergencyMode' || ruleName === 'sshService' || ruleName === 'automation' || ruleName === 'clusterEvents' || ruleName === 'rhuiErrors' || ruleName === 'blockDevices' || ruleName === 'sapInstanceErrors' || ruleName === 'firewallRules' || ruleName === 'networkInterfaces' || ruleName === 'vmcore' || ruleName === 'azureExtensions' || ruleName === 'lvmConfig' || ruleName === 'kernelTuning' || ruleName === 'nfsMounts' || ruleName === 'hanaSavepoints' || ruleName === 'hanaDeadlocks' || ruleName === 'hanaOom' || ruleName === 'hanaMergeErrors';
 
             try {
                 const parseStart = pt ? performance.now() : 0;
@@ -2359,6 +2392,7 @@ class IncrementalTARParser {
                                 : ruleName === 'sshService' ? ['timestamp', 'issueType', 'message']
                                 : ruleName === 'automation' ? ['timestamp', 'toolType', 'command']
                                 : ruleName === 'azureExtensions' ? ['name']
+                                : ruleName === 'highCpuEvents' ? ['timestamp', 'rawLine']
                                 : ['timestamp', 'message'];
                             const dedup = SCC_RULES.deduplicateEvents(this.analysisResults[ruleName].events, result.events, compFields);
                             this.analysisResults[ruleName].events.push(...dedup.addedEvents);
@@ -3013,6 +3047,7 @@ class IncrementalTARParser {
             pacemakerResources: pacemakerResourcesData,
             fencingConfig: fencingConfigData,
             clusterEvents: clusterEventsData,
+            highCpuEvents: this.analysisResults.highCpuEvents || null,
             antivirus: antivirusResults,
             clusterServices: clusterServicesResults,
             kernelTuning: this.analysisResults.kernelTuning || null,
@@ -3053,6 +3088,7 @@ class IncrementalTARParser {
             fipsModeSetup: this.analysisResults.fipsModeSetup || null,
             tunedProfile: this.analysisResults.tunedProfile || null,
             selinux: this.analysisResults.selinux || null,
+            selinuxErrors: this.analysisResults.selinuxErrors || null,
             swapSpace: this.analysisResults.swapSpace || null,
             fstrim: this.analysisResults.fstrim || null,
             kernelCmdline: this.analysisResults.kernelCmdline || null,
@@ -3070,6 +3106,7 @@ class IncrementalTARParser {
             packetLoss: this.analysisResults.packetLoss || null,
             ringBuffer: this.analysisResults.ringBuffer || null,
             networkSysctl: this.analysisResults.networkSysctl || null,
+            nsswitchConfig: this.analysisResults.nsswitchConfig || null,
             vmcore: this.analysisResults.vmcore || null,
             waagentConfig: this.analysisResults.waagentConfig || null,
             waagentLog: this.analysisResults.waagentLog || null,
@@ -3379,23 +3416,28 @@ self.onmessage = async function(e) {
             const { zipData } = e.data;
             debugLog(`[Worker] Starting ZIP analysis: ${zipData.byteLength} bytes`);
 
-            if (typeof fflate === 'undefined' || !fflate.unzipSync) {
+            if (typeof fflate === 'undefined' || !fflate.Unzip || !fflate.UnzipInflate) {
                 self.postMessage({ error: 'fflate library not loaded - ZIP support unavailable' });
                 return;
             }
 
-            // Extract all files from the ZIP archive
             const zipBytes = new Uint8Array(zipData);
-            let extracted;
-            try {
-                extracted = fflate.unzipSync(zipBytes);
-            } catch (unzipErr) {
-                self.postMessage({ error: 'Failed to extract ZIP archive: ' + unzipErr.message });
-                return;
-            }
 
-            const filenames = Object.keys(extracted);
-            debugLog(`[Worker] ZIP extracted ${filenames.length} entries`);
+            // Metadata-only pass over the central directory: the filter rejects
+            // every entry, so nothing is decompressed. Needed because ZIP entries
+            // are unordered - detection entries (e.g. device_0/...) may appear
+            // after parseable top-level files (e.g. results.txt) that would
+            // otherwise be skipped.
+            let entryNames = [];
+            try {
+                fflate.unzipSync(zipBytes, {
+                    filter: (f) => { entryNames.push(f.name); return false; }
+                });
+            } catch (scanErr) {
+                debugLog('[Worker] ZIP central directory pre-scan failed:', scanErr);
+                entryNames = [];
+            }
+            debugLog(`[Worker] ZIP contains ${entryNames.length} entries`);
 
             // Use IncrementalTARParser for its analysis infrastructure
             // (parser matching, result accumulation, getAnalysis)
@@ -3403,11 +3445,7 @@ self.onmessage = async function(e) {
             // Mark the end marker as found since ZIP doesn't have one
             parser.foundEndMarker = true;
 
-            // Pre-scan filenames to detect report type before processing.
-            // This is necessary because ZIP entries are unordered - detection
-            // entries (e.g. device_0/...) may appear after parseable top-level
-            // files (e.g. results.txt) that would otherwise be skipped.
-            for (const fname of filenames) {
+            for (const fname of entryNames) {
                 if (SCC_RULES.detection.isSCCReport(fname)) {
                     parser.isSCCReport = true;
                     parser.sccReportName = fname.split('/')[0];
@@ -3416,20 +3454,137 @@ self.onmessage = async function(e) {
                 }
             }
 
+            // Stream entries one at a time and hand each to the parser as soon as
+            // it is complete. unzipSync() would materialise every entry at once,
+            // which overflows the ArrayBuffer limit on multi-GB archives, and it
+            // also fails on ZIP64 entries whose 32-bit size field reads as
+            // 0xFFFFFFFF (fflate then tries to allocate a 4 GiB output buffer).
+            const totalEntries = entryNames.length;
             let processedCount = 0;
-            for (const fname of filenames) {
-                const data = extracted[fname];
-                parser.processExtractedFile(fname, data);
-                processedCount++;
+            let streamError = null;
 
-                // Send progress updates every 50 files
-                if (processedCount % 50 === 0) {
-                    self.postMessage({
-                        progress: Math.floor((processedCount / filenames.length) * 100),
-                        currentFile: fname,
-                        analysis: { fileCount: processedCount }
-                    });
+            const unzipper = new fflate.Unzip();
+            unzipper.register(fflate.UnzipInflate);
+            unzipper.onfile = (file) => {
+                const name = file.name;
+                let pending = [];       // inflated bytes not yet handed to the parser
+                let pendingBytes = 0;
+                let windowIndex = 0;
+                let entrySize = 0;
+                let skipRest = false;
+                let sniffed = false;
+                let bufferWhole = false;
+
+                const drain = () => {
+                    if (pending.length === 1) {
+                        const only = pending[0];
+                        pending = [];
+                        pendingBytes = 0;
+                        return only;
+                    }
+                    const joined = new Uint8Array(pendingBytes);
+                    let offset = 0;
+                    for (const part of pending) {
+                        joined.set(part, offset);
+                        offset += part.length;
+                    }
+                    pending = [];
+                    pendingBytes = 0;
+                    return joined;
+                };
+
+                const emit = (bytes, isLast) => {
+                    const chunkInfo = (windowIndex === 0 && isLast)
+                        ? undefined
+                        : { index: windowIndex, isLast };
+                    const kept = parser.processExtractedFile(name, bytes, chunkInfo);
+                    windowIndex++;
+                    if (kept === false) {
+                        skipRest = true;
+                        pending = [];
+                        pendingBytes = 0;
+                    }
+                };
+
+                file.ondata = (err, chunk, final) => {
+                    if (err) {
+                        if (!streamError) streamError = err;
+                        debugLog('[Worker] ZIP entry failed to inflate:', name, err.message || err);
+                        skipRest = true;
+                        pending = [];
+                        pendingBytes = 0;
+                        return;
+                    }
+
+                    if (chunk && chunk.length && !skipRest) {
+                        if (!sniffed) {
+                            sniffed = true;
+                            // A nested .gz can only be decompressed as one whole
+                            // stream, so it is never split into windows.
+                            bufferWhole = chunk.length >= 2 && chunk[0] === 0x1f && chunk[1] === 0x8b;
+                        }
+
+                        entrySize += chunk.length;
+                        // fflate emits views into a reusable inflate buffer, so copy.
+                        pending.push(chunk.slice());
+                        pendingBytes += chunk.length;
+
+                        // Hand over a full window, cut at the last newline so no
+                        // parser ever sees a line split across two windows.
+                        if (!bufferWhole && pendingBytes >= ZIP_WINDOW_BYTES) {
+                            const buffered = drain();
+                            let cut = buffered.lastIndexOf(0x0a) + 1;
+                            if (cut === 0) cut = buffered.length; // no newline: emit as-is
+                            emit(buffered.subarray(0, cut), false);
+                            if (!skipRest && cut < buffered.length) {
+                                const carry = buffered.slice(cut);
+                                pending.push(carry);
+                                pendingBytes = carry.length;
+                            }
+                        }
+                    }
+
+                    if (!final) return;
+
+                    if (!skipRest) emit(drain(), true);
+
+                    if (windowIndex > 1) {
+                        // The inventory entry was recorded from the first window only.
+                        const record = parser.files.find(f => f.name === name);
+                        if (record) record.size = entrySize;
+                        debugLog(`[Worker] ZIP entry streamed in ${windowIndex} windows: ${name} (${entrySize} bytes)`);
+                    }
+
+                    processedCount++;
+
+                    // Send progress updates every 50 files
+                    if (processedCount % 50 === 0 && totalEntries > 0) {
+                        self.postMessage({
+                            progress: Math.min(99, Math.floor((processedCount / totalEntries) * 100)),
+                            currentFile: name,
+                            analysis: { fileCount: processedCount }
+                        });
+                    }
+                };
+
+                file.start();
+            };
+
+            try {
+                const pushSize = 16 * 1024 * 1024;
+                for (let offset = 0; offset < zipBytes.length; offset += pushSize) {
+                    const end = Math.min(offset + pushSize, zipBytes.length);
+                    unzipper.push(zipBytes.subarray(offset, end), end === zipBytes.length);
                 }
+            } catch (unzipErr) {
+                self.postMessage({ error: 'Failed to extract ZIP archive: ' + unzipErr.message });
+                return;
+            }
+
+            if (processedCount === 0) {
+                const reason = streamError ? (streamError.message || String(streamError)) : 'no readable entries found';
+                self.postMessage({ error: 'Failed to extract ZIP archive: ' + reason });
+                return;
             }
 
             // Build final analysis using the same getAnalysis() logic

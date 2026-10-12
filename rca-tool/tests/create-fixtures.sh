@@ -2313,6 +2313,30 @@ SCCEOF
 create_fixture "test-firewall-scc"
 
 ################################################################################
+# Test: nsswitch.conf anomalies
+# Centrify identity provider ahead of files, hosts without DNS, empty database
+################################################################################
+echo ""
+echo "=== Creating test-nsswitch-centrify.tar.xz ==="
+mkdir -p test-data/etc
+cat > test-data/etc/nsswitch.conf << 'EOF'
+# /etc/nsswitch.conf
+#
+# Managed by Centrify DirectControl - do not edit by hand.
+
+passwd:     centrify files
+group:      centrify files
+shadow:     files
+hosts:      files
+networks:   files
+services:
+protocols:  files
+netgroup:   nis
+automount:  files centrify
+EOF
+create_fixture "test-nsswitch-centrify"
+
+################################################################################
 # Test: Firewall Rules - SCC with active nftables rules
 # Tests nftables ruleset detection in SCC network.txt
 ################################################################################
@@ -2627,9 +2651,9 @@ create_fixture "test-network-interfaces-scc"
 # emails, secrets, an Azure resource id, and FQDN hostnames. The paired spec
 # (pii.spec.js) asserts none of the raw values survive and that IPs are
 # replaced with subnet-preserving tokens.
-#   - 10.20.30.40 and 10.20.30.41 share a /24 -> same net label (net-A)
-#   - 172.16.99.5 is a different subnet -> net-B
-#   - 127.0.0.1 / ::1 are loopback -> preserved verbatim
+#   - 203.0.113.40 and 203.0.113.41 share a /24 -> same net label (net-A)
+#   - 198.51.100.5 is a different subnet -> net-B
+#   - 127.0.0.1 / ::1 loopback and 10.20.30.40 (RFC 1918) -> preserved verbatim
 ################################################################################
 echo ""
 echo "=== Creating test-pii.tar.xz ==="
@@ -2645,17 +2669,21 @@ cat > test-data/network.txt << 'SCCEOF'
        valid_lft forever preferred_lft forever
 2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc mq state UP group default qlen 1000
     link/ether 00:0d:3a:aa:bb:cc brd ff:ff:ff:ff:ff:ff
-    inet 10.20.30.40/24 brd 10.20.30.255 scope global eth0
+    inet 203.0.113.40/24 brd 203.0.113.255 scope global eth0
        valid_lft forever preferred_lft forever
     inet6 fe80::20d:3aff:feaa:bbcc/64 scope link
        valid_lft forever preferred_lft forever
 3: eth1: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc mq state UP group default qlen 1000
     link/ether 00:0d:3a:aa:bb:cd brd ff:ff:ff:ff:ff:ff
-    inet 10.20.30.41/24 brd 10.20.30.255 scope global eth1
+    inet 203.0.113.41/24 brd 203.0.113.255 scope global eth1
        valid_lft forever preferred_lft forever
 4: eth2: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc mq state UP group default qlen 1000
     link/ether 00:0d:3a:dd:ee:ff brd ff:ff:ff:ff:ff:ff
-    inet 172.16.99.5/24 brd 172.16.99.255 scope global eth2
+    inet 198.51.100.5/24 brd 198.51.100.255 scope global eth2
+       valid_lft forever preferred_lft forever
+5: eth3: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc mq state UP group default qlen 1000
+    link/ether 00:0d:3a:dd:ee:00 brd ff:ff:ff:ff:ff:ff
+    inet 10.20.30.40/24 brd 10.20.30.255 scope global eth3
        valid_lft forever preferred_lft forever
 
 #==[ Command ]======================================#
@@ -2681,17 +2709,26 @@ version: 5.8-3.0.7
 firmware-version: 16.35.2000
 bus-info: 0000:00:02.0
 supports-statistics: yes
+
+#==[ Command ]======================================#
+# /sbin/ethtool -i eth3
+driver: hv_netvsc
+version: 5.4.0
+firmware-version: N/A
+bus-info: vmbus:xxx-www
+supports-statistics: yes
 SCCEOF
 mkdir -p test-data/etc
 cat > test-data/etc/hosts << 'EOF'
 127.0.0.1   localhost
-10.20.30.40 db01 db01.corp.contoso.example.com
-10.20.30.41 db02 db02.corp.contoso.example.com
-172.16.99.5 backup backup.corp.contoso.example.com
+203.0.113.40 db01 db01.corp.contoso.example.com
+203.0.113.41 db02 db02.corp.contoso.example.com
+198.51.100.5 backup backup.corp.contoso.example.com
+10.20.30.40 mgmt mgmt.corp.contoso.example.com
 EOF
 mkdir -p test-data/var/log
 cat > test-data/var/log/messages.txt << 'EOF'
-2025-11-13T07:39:23+01:00 db01 sshd[1001]: Accepted publickey for jdoe from 10.20.30.99 port 51000
+2025-11-13T07:39:23+01:00 db01 sshd[1001]: Accepted publickey for jdoe from 203.0.113.99 port 51000
 2025-11-13T07:39:24+01:00 db01 app[1002]: contact admin jdoe@contoso.example.com for access
 2025-11-13T07:39:25+01:00 db01 app[1002]: connecting with password=S3cr3tP@ssw0rd to service
 2025-11-13T07:39:26+01:00 db01 waagent[1003]: resource /subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/rg-prod-sap/providers/Microsoft.Compute/virtualMachines/db01-vm provisioned
@@ -3950,6 +3987,13 @@ cat > test-data/etc/selinux/config << 'EOF'
 # This file controls the state of SELinux on the system.
 SELINUX=enforcing
 SELINUXTYPE=targeted
+EOF
+mkdir -p test-data/var/log/audit
+cat > test-data/var/log/audit/audit.log << 'EOF'
+SELinux is preventing /usr/bin/httpd from name_connect access.
+*****  Plugin catchall (100. confidence) suggests  *******************
+If you believe that httpd should be allowed, generate a policy module.
+type=AVC msg=audit(1722500000.123:42): avc: denied { name_connect } for pid=123 comm="httpd" path="/var/www" scontext=system_u:system_r:httpd_t:s0 tcontext=system_u:object_r:http_port_t:s0 tclass=tcp_socket permissive=0
 EOF
 mkdir -p test-data/proc
 cat > test-data/proc/meminfo << 'EOF'

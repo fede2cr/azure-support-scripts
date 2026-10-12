@@ -57,3 +57,10 @@ const xfsErrorsParser = {
         return callWasmEvents('parseXfsErrors', content, filename);
     }
 };
+
+const selinuxErrorsParser = {
+    filePattern: /\/(audit\.log|messages|localmessages|journalctl[^\/]*)(?:[.-]\d+)?(?:\.txt)?$|sos_commands\/selinux\/(ausearch|sealert)[^\/]*$|\/selinux\.txt$/,
+    parse: function(content, filename, _lines) {
+        return callWasmEvents('parseSelinuxErrors', content, filename);
+    }
+};

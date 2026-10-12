@@ -3759,10 +3759,12 @@ pub fn parse_pacemaker_resources(content: &str, source_path: &str) -> PacemakerR
             relevant_owned = Some(sections.join("\n\n"));
         } else {
             // crm configure show fallback
+            // Group 1 is the section body; the `regex` crate has no lookahead,
+            // so the following `#==[` header is matched and then discarded.
             let fallback_re =
-                Regex::new(r"(?ms)^#==\[ Command \]====.*?crm configure show.*?(?=^#==\[|\z)")
+                Regex::new(r"(?ms)(^#==\[ Command \]====.*?crm configure show.*?)(?:^#==\[|\z)")
                     .unwrap();
-            if let Some(m) = fallback_re.find(content) {
+            if let Some(m) = fallback_re.captures(content).and_then(|c| c.get(1)) {
                 relevant_owned = Some(m.as_str().to_string());
             } else {
                 return PacemakerResourcesResult {

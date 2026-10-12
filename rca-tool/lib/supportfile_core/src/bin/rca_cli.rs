@@ -74,6 +74,11 @@ fn section(title: &str) -> String {
     format!("\n{SUB}\n{title}\n{SUB}\n")
 }
 
+/// Renders a scalar without the quotes `Value`'s Display adds around strings.
+fn scalar(v: &Value) -> String {
+    v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string())
+}
+
 fn list_warnings(items: Option<&Value>, indent: &str) -> String {
     let Some(Value::Array(arr)) = items else {
         return String::new();
@@ -114,6 +119,21 @@ fn s(o: &Map<String, Value>, k: &str) -> Option<String> {
 
 fn arr_len(v: Option<&Value>) -> usize {
     v.and_then(|x| x.as_array()).map(|a| a.len()).unwrap_or(0)
+}
+
+/// Render a kibibyte count the same way the web UI formats swap sizes.
+fn format_kb(kb: i64) -> String {
+    if kb < 0 {
+        return "-".to_string();
+    }
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    let mut value = kb as f64 * 1024.0;
+    let mut unit = 0;
+    while value >= 1024.0 && unit < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit += 1;
+    }
+    format!("{value:.2} {}", UNITS[unit])
 }
 
 fn obj<'a>(r: &'a BTreeMap<String, Value>, k: &str) -> Option<&'a Map<String, Value>> {
@@ -183,9 +203,22 @@ fn format_text(results: &ArchiveResults) -> String {
     }
 
     // ----- Cluster -----
-    if ["corosyncConfig", "clusterStatus", "clusterMaintenanceMode"]
-        .iter()
-        .any(|k| has(k))
+    if [
+        "corosyncConfig",
+        "clusterStatus",
+        "clusterMaintenanceMode",
+        "clusterNodes",
+        "clusterDaemonStatus",
+        "corosyncStatus",
+        "pacemakerResources",
+        "fencingConfig",
+        "sbdConfig",
+        "azureFenceAuth",
+        "azureScheduledEvents",
+        "liveMigration",
+    ]
+    .iter()
+    .any(|k| has(k))
     {
         out.push_str(&section("CLUSTER"));
         if let Some(cc) = obj(r, "corosyncConfig") {
@@ -252,6 +285,181 @@ fn format_text(results: &ArchiveResults) -> String {
                 }
             }
         }
+        if let Some(cn) = obj(r, "clusterNodes") {
+            let nodes = cn.get("nodes").and_then(Value::as_array);
+            if nodes.map(|n| !n.is_empty()).unwrap_or(false) {
+                let names: Vec<String> = nodes
+                    .unwrap()
+                    .iter()
+                    .map(scalar)
+                    .collect();
+                out.push_str(&format!("  Nodes: {}\n", names.join(", ")));
+                for e in cn
+                    .get("node_to_ip_map")
+                    .and_then(Value::as_array)
+                    .unwrap_or(&Vec::new())
+                {
+                    if let Some(o) = e.as_object() {
+                        let host = s(o, "host").unwrap_or_default();
+                        let ip = s(o, "ip").unwrap_or_default();
+                        out.push_str(&format!("    - {host}: {ip}\n"));
+                    }
+                }
+            }
+        }
+        if let Some(ds) = obj(r, "clusterDaemonStatus") {
+            if has_data(&Value::Object(ds.clone())) {
+                out.push_str("  Daemons:\n");
+                if let Some(dm) = ds.get("daemons").and_then(Value::as_object) {
+                    for (name, st) in dm {
+                        let flag = |k: &str| match st.get(k).and_then(Value::as_bool) {
+                            Some(true) => "yes",
+                            Some(false) => "no",
+                            None => "unknown",
+                        };
+                        out.push_str(&format!(
+                            "    {name}: active={} enabled={}\n",
+                            flag("active"),
+                            flag("enabled")
+                        ));
+                    }
+                }
+                out.push_str(&list_warnings(ds.get("warnings"), "    "));
+            }
+        }
+        if let Some(cst) = obj(r, "corosyncStatus") {
+            if has_data(&Value::Object(cst.clone())) {
+                let rings = arr_len(cst.get("rings"));
+                out.push_str(&format!("  Corosync rings: {rings}\n"));
+                out.push_str(&list_warnings(cst.get("warnings"), "    "));
+            }
+        }
+        if let Some(pr) = obj(r, "pacemakerResources") {
+            if has_data(&Value::Object(pr.clone())) {
+                let count = pr.get("count").and_then(Value::as_i64).unwrap_or(0);
+                let groups = pr.get("groups_count").and_then(Value::as_i64).unwrap_or(0);
+                let failed = pr
+                    .get("failed_actions_count")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(0);
+                out.push_str(&format!(
+                    "  Resources: {count} ({groups} group(s), {failed} failed action(s))\n"
+                ));
+            }
+        }
+        if let Some(fc) = obj(r, "fencingConfig") {
+            if has_data(&Value::Object(fc.clone())) {
+                let n = fc.get("count").and_then(Value::as_i64).unwrap_or(0);
+                let stonith = match fc.get("stonith_enabled").and_then(Value::as_bool) {
+                    Some(true) => "enabled",
+                    Some(false) => "DISABLED",
+                    None => "unknown",
+                };
+                out.push_str(&format!("  Fencing: {n} device(s), stonith {stonith}\n"));
+                for d in fc
+                    .get("fencing_devices")
+                    .and_then(Value::as_array)
+                    .unwrap_or(&Vec::new())
+                {
+                    if let Some(o) = d.as_object() {
+                        let name = s(o, "name").unwrap_or_default();
+                        let agent = s(o, "agent").unwrap_or_default();
+                        out.push_str(&format!("    - {name}: {agent}\n"));
+                    }
+                }
+            }
+        }
+        if let Some(sb) = obj(r, "sbdConfig") {
+            if has_data(&Value::Object(sb.clone())) {
+                let devs = arr_len(sb.get("sbd_devices"));
+                out.push_str(&format!("  SBD: {devs} device(s)\n"));
+                for (label, key) in [
+                    ("Watchdog timeout", "sbd_watchdog_timeout"),
+                    ("Start mode", "sbd_startmode"),
+                    ("Timeout action", "sbd_timeout_action"),
+                ] {
+                    if let Some(v) = s(sb, key) {
+                        out.push_str(&format!("    {label}: {v}\n"));
+                    }
+                }
+                out.push_str(&list_warnings(sb.get("warnings"), "    "));
+            }
+        }
+        if let Some(af) = obj(r, "azureFenceAuth") {
+            if has_data(&Value::Object(af.clone())) {
+                let m = s(af, "auth_method").unwrap_or_else(|| "unknown".into());
+                out.push_str(&format!("  Azure fence auth: {m}\n"));
+                out.push_str(&list_warnings(af.get("warnings"), "    "));
+            }
+        }
+        if let Some(se) = obj(r, "azureScheduledEvents") {
+            if has_data(&Value::Object(se.clone())) {
+                let configured = se
+                    .get("health_azure_configured")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                out.push_str(&format!(
+                    "  Azure scheduled events: {}\n",
+                    if configured {
+                        "health-azure configured"
+                    } else {
+                        "health-azure NOT configured"
+                    }
+                ));
+                out.push_str(&list_warnings(se.get("warnings"), "    "));
+            }
+        }
+        if let Some(lm) = obj(r, "liveMigration") {
+            if has_data(&Value::Object(lm.clone())) {
+                let n = arr_len(lm.get("events"));
+                out.push_str(&format!("  Live migration events: {n}\n"));
+            }
+        }
+        out.push('\n');
+    }
+
+    // ----- SAP -----
+    if ["sapInstanceConfig", "sapInstanceErrors"]
+        .iter()
+        .any(|k| has(k))
+    {
+        out.push_str(&section("SAP"));
+        if let Some(sc) = obj(r, "sapInstanceConfig") {
+            if has_data(&Value::Object(sc.clone())) {
+                let n = sc
+                    .get("instance_count")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(0);
+                out.push_str(&format!("  SAP instances: {n}\n"));
+                for i in sc
+                    .get("instances")
+                    .and_then(Value::as_array)
+                    .unwrap_or(&Vec::new())
+                {
+                    if let Some(o) = i.as_object() {
+                        let name = s(o, "instance_name").unwrap_or_default();
+                        let res = s(o, "resource_name").unwrap_or_default();
+                        out.push_str(&format!("    - {name} ({res})\n"));
+                        out.push_str(&list_warnings(o.get("warnings"), "      "));
+                    }
+                }
+            }
+        }
+        if let Some(se) = obj(r, "sapInstanceErrors") {
+            if has_data(&Value::Object(se.clone())) {
+                let n = se.get("error_count").and_then(Value::as_i64).unwrap_or(0);
+                out.push_str(&format!("  SAP instance errors: {n}\n"));
+                for e in se
+                    .get("errors")
+                    .and_then(Value::as_array)
+                    .unwrap_or(&Vec::new())
+                {
+                    if let Some(msg) = e.as_object().and_then(|o| s(o, "message")) {
+                        out.push_str(&format!("    - {msg}\n"));
+                    }
+                }
+            }
+        }
         out.push('\n');
     }
 
@@ -264,6 +472,8 @@ fn format_text(results: &ArchiveResults) -> String {
         "fstabAnalysis",
         "dfOutput",
         "mtabAnalysis",
+        "nvmeList",
+        "iscsiConfig",
     ];
     if storage_keys.iter().any(|k| has(k)) {
         out.push_str(&section("STORAGE"));
@@ -333,13 +543,38 @@ fn format_text(results: &ArchiveResults) -> String {
                 out.push_str(&line);
             }
         }
+        if let Some(nv) = obj(r, "nvmeList") {
+            if has_data(&Value::Object(nv.clone())) {
+                let n = nv.get("drive_count").and_then(Value::as_i64).unwrap_or(0);
+                out.push_str(&format!("  NVMe drives: {n}\n"));
+            }
+        }
+        if let Some(isc) = obj(r, "iscsiConfig") {
+            if has_data(&Value::Object(isc.clone())) {
+                out.push_str(&format!(
+                    "  iSCSI: {} target(s), {} session(s)\n",
+                    arr_len(isc.get("targets")),
+                    arr_len(isc.get("sessions"))
+                ));
+                if let Some(v) = s(isc, "initiator_name") {
+                    out.push_str(&format!("    Initiator: {v}\n"));
+                }
+                out.push_str(&list_warnings(isc.get("warnings"), "    "));
+            }
+        }
         out.push('\n');
     }
 
     // ----- Networking -----
-    if ["networkInterfaces", "firewallRules", "sshServiceIssues"]
-        .iter()
-        .any(|k| has(k))
+    if [
+        "networkInterfaces",
+        "firewallRules",
+        "sshServiceIssues",
+        "hostsFile",
+        "nsswitchConfig",
+    ]
+    .iter()
+    .any(|k| has(k))
     {
         out.push_str(&section("NETWORKING"));
         if let Some(ni) = obj(r, "networkInterfaces") {
@@ -403,6 +638,74 @@ fn format_text(results: &ArchiveResults) -> String {
                 out.push_str(&format!("  SSH issues: {n} event(s)\n"));
             }
         }
+        if let Some(hf) = obj(r, "hostsFile") {
+            if has_data(&Value::Object(hf.clone())) {
+                out.push_str(&format!(
+                    "  /etc/hosts: {} entry(ies)\n",
+                    arr_len(hf.get("entries"))
+                ));
+                for e in hf
+                    .get("entries")
+                    .and_then(Value::as_array)
+                    .unwrap_or(&Vec::new())
+                {
+                    if let Some(o) = e.as_object() {
+                        let ip = s(o, "ip").unwrap_or_default();
+                        let names: Vec<String> = o
+                            .get("hostnames")
+                            .and_then(Value::as_array)
+                            .map(|a| a.iter().map(scalar).collect())
+                            .unwrap_or_default();
+                        out.push_str(&format!("    {ip} {}\n", names.join(" ")));
+                    }
+                }
+            }
+        }
+        if let Some(ns) = obj(r, "nsswitchConfig") {
+            if has_data(&Value::Object(ns.clone())) {
+                let dbs: Vec<String> = ns
+                    .get("databases")
+                    .and_then(Value::as_array)
+                    .map(|a| a.iter().map(scalar).collect())
+                    .unwrap_or_default();
+                out.push_str(&format!("  nsswitch.conf: {} database(s)\n", dbs.len()));
+                for e in ns
+                    .get("entries")
+                    .and_then(Value::as_array)
+                    .unwrap_or(&Vec::new())
+                {
+                    if let Some(o) = e.as_object() {
+                        let db = s(o, "database").unwrap_or_default();
+                        let svcs: Vec<String> = o
+                            .get("services")
+                            .and_then(Value::as_array)
+                            .map(|a| a.iter().map(scalar).collect())
+                            .unwrap_or_default();
+                        out.push_str(&format!("    {db}: {}\n", svcs.join(" ")));
+                    }
+                }
+                for p in ns
+                    .get("third_party_providers")
+                    .and_then(Value::as_array)
+                    .unwrap_or(&Vec::new())
+                {
+                    if let Some(o) = p.as_object() {
+                        let product = s(o, "product").unwrap_or_default();
+                        let service = s(o, "service").unwrap_or_default();
+                        let dbs: Vec<String> = o
+                            .get("databases")
+                            .and_then(Value::as_array)
+                            .map(|a| a.iter().map(scalar).collect())
+                            .unwrap_or_default();
+                        out.push_str(&format!(
+                            "    Identity provider: {product} ({service}) on {}\n",
+                            dbs.join(", ")
+                        ));
+                    }
+                }
+                out.push_str(&list_warnings(ns.get("warnings"), "    "));
+            }
+        }
         out.push('\n');
     }
 
@@ -413,6 +716,7 @@ fn format_text(results: &ArchiveResults) -> String {
         ("Kernel reboots", count_events(r, "kernelReboots")),
         ("OOM killer", count_events(r, "oomKiller")),
         ("XFS errors", count_events(r, "xfsErrors")),
+        ("SELinux errors", count_events(r, "selinuxErrors")),
         ("Automation", count_events(r, "automationEvents")),
         ("Emergency mode", count_events(r, "emergencyMode")),
     ];
@@ -426,6 +730,139 @@ fn format_text(results: &ArchiveResults) -> String {
         out.push('\n');
     }
 
+    // ----- OS tuning (mirrors the web "OS Tuning" section) -----
+    if ["tunedProfile", "swapSpace", "fstrim"].iter().any(|k| has(k)) {
+        out.push_str(&section("OS TUNING"));
+
+        if let Some(tuned) = obj(r, "tunedProfile") {
+            if has_data(&Value::Object(tuned.clone())) {
+                let active = s(tuned, "active_profile").unwrap_or_else(|| "-".into());
+                out.push_str(&format!("  Tuned profile: {active}\n"));
+                out.push_str(&list_warnings(tuned.get("warnings"), "    "));
+                out.push_str(&list_warnings(tuned.get("recommendations"), "    "));
+            }
+        }
+
+        if let Some(swap) = obj(r, "swapSpace") {
+            if has_data(&Value::Object(swap.clone())) {
+                let total = swap
+                    .get("swap_total_kb")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(-1);
+                let free = swap
+                    .get("swap_free_kb")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(-1);
+                out.push_str(&format!(
+                    "  Swap: total {} | free {}\n",
+                    format_kb(total),
+                    format_kb(free)
+                ));
+                out.push_str(&list_warnings(swap.get("warnings"), "    "));
+            }
+        }
+
+        if let Some(fstrim) = obj(r, "fstrim") {
+            if has_data(&Value::Object(fstrim.clone())) {
+                let state = s(fstrim, "timer_state").unwrap_or_else(|| "-".into());
+                let enabled = fstrim
+                    .get("timer_enabled")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                out.push_str(&format!(
+                    "  fstrim timer: {state} | periodic trim enabled: {}\n",
+                    if enabled { "Yes" } else { "No" }
+                ));
+                out.push_str(&list_warnings(fstrim.get("warnings"), "    "));
+            }
+        }
+
+        out.push('\n');
+    }
+
+    // ----- SELinux (mirrors the web "SELinux" section) -----
+    if has("selinux") || count_events(r, "selinuxErrors") > 0 {
+        out.push_str(&section("SELINUX"));
+
+        if let Some(status) = obj(r, "selinux") {
+            let current = s(status, "current_mode");
+            let configured = s(status, "config_mode");
+            let effective = current
+                .as_deref()
+                .or(configured.as_deref())
+                .unwrap_or("unknown");
+            out.push_str(&format!("  Status: {effective}\n"));
+            out.push_str(&format!(
+                "  Current mode: {}\n",
+                current.as_deref().unwrap_or("-")
+            ));
+            out.push_str(&format!(
+                "  Mode from config: {}\n",
+                configured.as_deref().unwrap_or("-")
+            ));
+            if let Some(path) = s(status, "source_path") {
+                let line = status
+                    .get("current_source_line")
+                    .and_then(Value::as_u64)
+                    .or_else(|| status.get("config_source_line").and_then(Value::as_u64));
+                match line {
+                    Some(line) => out.push_str(&format!("  Status source: {path}:{line}\n")),
+                    None => out.push_str(&format!("  Status source: {path}\n")),
+                }
+            }
+            out.push_str(&list_warnings(status.get("warnings"), "    "));
+            out.push_str(&list_warnings(status.get("recommendations"), "    "));
+        } else {
+            out.push_str("  Status: unknown\n");
+        }
+
+        if let Some(errors) = obj(r, "selinuxErrors") {
+            if let Some(events) = errors.get("events").and_then(Value::as_array) {
+                if !events.is_empty() {
+                    out.push_str(&format!("  Errors: {} event(s)\n", events.len()));
+                    for event in events {
+                        let path = event
+                            .get("source_path")
+                            .and_then(Value::as_str)
+                            .unwrap_or("unknown source");
+                        let line = event
+                            .get("source_line")
+                            .or_else(|| event.get("line_number"))
+                            .and_then(Value::as_u64)
+                            .map(|value| value.to_string())
+                            .unwrap_or_else(|| "?".to_string());
+                        let event_type = event
+                            .get("event_type")
+                            .and_then(Value::as_str)
+                            .unwrap_or("AVC");
+                        let command = event.get("command").and_then(Value::as_str).unwrap_or("-");
+                        let permissions = event
+                            .get("permissions")
+                            .and_then(Value::as_array)
+                            .map(|items| {
+                                items
+                                    .iter()
+                                    .filter_map(Value::as_str)
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            })
+                            .filter(|value| !value.is_empty())
+                            .unwrap_or_else(|| "-".to_string());
+                        let raw = event.get("raw_line").and_then(Value::as_str).unwrap_or("");
+                        out.push_str(&format!(
+                            "    {path}:{line} [{event_type}] comm={command} perms={permissions}\n"
+                        ));
+                        if !raw.is_empty() {
+                            out.push_str(&format!("      {raw}\n"));
+                        }
+                    }
+                }
+            }
+        }
+
+        out.push('\n');
+    }
+
     // ----- Packages / RHUI -----
     let pkg_keys = [
         "distroPackages",
@@ -436,6 +873,7 @@ fn format_text(results: &ArchiveResults) -> String {
         "cryptoPolicies",
         "fipsModeSetup",
         "kernelCmdline",
+        "secureBoot",
         "kernelTuning",
         "hugePages",
     ];
@@ -502,6 +940,21 @@ fn format_text(results: &ArchiveResults) -> String {
                 }
             }
         }
+        if let Some(sb) = obj(r, "secureBoot") {
+            if has_data(&Value::Object(sb.clone())) {
+                let supported = sb.get("supported").and_then(Value::as_bool).unwrap_or(true);
+                let state = if !supported {
+                    "not supported (no EFI variables)"
+                } else {
+                    match sb.get("enabled").and_then(Value::as_bool) {
+                        Some(true) => "enabled",
+                        Some(false) => "disabled",
+                        None => "unknown",
+                    }
+                };
+                out.push_str(&format!("  SecureBoot: {state}\n"));
+            }
+        }
         if let Some(re_) = obj(r, "rhuiErrors") {
             if has_data(&Value::Object(re_.clone())) {
                 let n = re_.get("count").and_then(Value::as_i64).unwrap_or(0);
@@ -519,7 +972,7 @@ fn format_text(results: &ArchiveResults) -> String {
                         "net.core.wmem_max",
                     ] {
                         if let Some(v) = params.get(k) {
-                            out.push_str(&format!("    {k} = {}\n", v));
+                            out.push_str(&format!("    {k} = {}\n", scalar(v)));
                         }
                     }
                 }
@@ -610,6 +1063,24 @@ fn format_text(results: &ArchiveResults) -> String {
                 let bm = s(sc, "billing_model").unwrap_or_else(|| "n/a".into());
                 let rs = s(sc, "registration_server").unwrap_or_else(|| "-".into());
                 out.push_str(&format!("  SUSE Cloud Register: {bm} via {rs}\n"));
+            }
+        }
+        out.push('\n');
+    }
+
+    // ----- Configuration management -----
+    let cfgmgmt = [("puppetAgent", "Puppet"), ("chefClient", "Chef")];
+    if cfgmgmt.iter().any(|(k, _)| has(k)) {
+        out.push_str(&section("CONFIGURATION MANAGEMENT"));
+        for (key, label) in cfgmgmt {
+            if let Some(v) = obj(r, key) {
+                if has_data(&Value::Object(v.clone())) {
+                    let running = v.get("running").and_then(Value::as_bool).unwrap_or(false);
+                    out.push_str(&format!(
+                        "  {label}: detected ({})\n",
+                        if running { "running" } else { "not running" }
+                    ));
+                }
             }
         }
         out.push('\n');

@@ -54,6 +54,21 @@ test.describe('Networking Parser', () => {
     expect(resultText).toMatch(/No Active Firewall/i);
   });
 
+  test('detects Centrify and lookup-order anomalies in nsswitch.conf', async ({ page }) => {
+    const resultHTML = await uploadAndWaitForAnalysis(page, 'scc_test-nsswitch-centrify.tar.xz');
+    const resultText = await getResultText(page);
+
+    expect(resultHTML).toContain('Networking');
+    expect(resultHTML).toContain('Name service switch');
+    // Third-party identity provider detection
+    expect(resultText).toMatch(/Centrify DirectControl/);
+    expect(resultText).toMatch(/Identity provider: Centrify DirectControl \(centrify\)/);
+    // Lookup-order and missing-source anomalies
+    expect(resultText).toMatch(/queries centrify before 'files'/);
+    expect(resultText).toMatch(/does not include 'dns'/);
+    expect(resultText).toMatch(/has no lookup sources/);
+  });
+
   test('detects nftables from SCC network.txt', async ({ page }) => {
     const resultHTML = await uploadAndWaitForAnalysis(page, 'scc_test-firewall-scc-nftables.tar.xz');
     const resultText = await getResultText(page);

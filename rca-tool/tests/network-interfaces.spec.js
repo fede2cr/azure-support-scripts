@@ -26,8 +26,8 @@ test.describe('Network Interfaces Parser', () => {
     // Should detect eth0 and eth1
     expect(resultHTML).toContain('eth0');
     expect(resultHTML).toContain('eth1');
-    // IP addresses are anonymized to subnet-preserving tokens by default.
-    expect(resultHTML).toMatch(/\[\[IPv4\|net-[A-Z]+\|h\d+\]\]/);
+    // Private (RFC 1918) IP addresses are non-PII and preserved verbatim.
+    expect(resultHTML).toContain('10.0.0.4');
     // Should show DHCP for eth0
     expect(resultHTML).toContain('DHCP');
     // Should show Static for eth1
@@ -55,8 +55,8 @@ test.describe('Network Interfaces Parser', () => {
     expect(resultHTML).toContain('MANA');
     // Should show DHCP for eth0
     expect(resultHTML).toContain('DHCP');
-    // IP is anonymized to a subnet-preserving token.
-    expect(resultHTML).toMatch(/\[\[IPv4\|net-[A-Z]+\|h\d+\]\]/);
+    // Private (RFC 1918) IP is non-PII and preserved verbatim.
+    expect(resultHTML).toContain('10.1.0.5');
     // Should show accelerated networking
     expect(resultHTML).toMatch(/Accelerated Networking/i);
   });
@@ -80,9 +80,9 @@ test.describe('Network Interfaces Parser', () => {
     expect(content).toContain('eth1');
     // Should detect DHCP for eth0
     expect(content).toMatch(/dhcp/i);
-    // Static and DHCP IPs are anonymized to subnet-preserving tokens.
-    expect(content).toMatch(/\[\[IPv4\|net-[A-Z]+\|h\d+\]\]/);
-    // Should NOT show old boot IP (never reintroduced by anonymization)
+    // Private (RFC 1918) IPs are non-PII and preserved verbatim.
+    expect(content).toContain('10.0.0.4');
+    // Should NOT show old boot IP (not the last reported configuration)
     expect(content).not.toContain('10.0.0.99');
     // MAC from cloud-init ci-info is anonymized but keeps the vendor OUI.
     expect(content).toMatch(/\[\[MAC\|[0-9a-f:]+\|dev\d+\]\]/i);
@@ -110,8 +110,8 @@ test.describe('Network Interfaces Parser', () => {
     expect(content).toContain('eth0');
     // Should detect DHCP
     expect(content).toMatch(/dhcp/i);
-    // Should detect DHCP IP from cloud-init-output.log (anonymized token)
-    expect(content).toMatch(/\[\[IPv4\|net-[A-Z]+\|h\d+\]\]/);
+    // Should detect DHCP IP from cloud-init-output.log (private, preserved verbatim)
+    expect(content).toContain('10.0.1.10');
     // Should detect MAC from cloud-init (anonymized, OUI preserved)
     expect(content).toMatch(/\[\[MAC\|[0-9a-f:]+\|dev\d+\]\]/i);
     // Should show cloud-init source warning with file provenance

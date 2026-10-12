@@ -10,6 +10,7 @@
     "build:cli": "cd lib/supportfile_core && cargo build --locked --release --features cli --bin rca_cli",
     "build:all": "npm run build:web && npm run build:cli",
     "preview": "cd web-leptos && trunk serve",
+    "test:parity": "node tests/detector-parity.js",
     "docs": "rm -rf docs && npx jsdoc -c jsdoc.json"
   },
   "keywords": [

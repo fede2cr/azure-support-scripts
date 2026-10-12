@@ -246,11 +246,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "supportfile_pii_anonymizer"
+version = "0.0.0"
+dependencies = [
+ "regex",
+ "serde_json",
+]
+
+[[package]]
 name = "supportfile_py"
 version = "0.0.0"
 dependencies = [
  "pyo3",
+ "serde_json",
  "supportfile",
+ "supportfile_pii_anonymizer",
 ]
 
 [[package]]

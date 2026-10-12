@@ -11,4 +11,6 @@ crate-type = ["cdylib"]
 
 [dependencies]
 pyo3 = { version = "0.22", features = ["extension-module", "abi3-py39"] }
+serde_json = "1"
 supportfile_core = { package = "supportfile", path = "../supportfile_core" }
+supportfile_pii_anonymizer = { path = "../supportfile_pii_anonymizer" }

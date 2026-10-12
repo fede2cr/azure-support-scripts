@@ -2,32 +2,45 @@
 
 use pyo3::prelude::*;
 use supportfile_core::{
-    parse_automation_events_json, parse_azure_extensions_json, parse_azure_site_recovery_json,
+    parse_automation_events_json, parse_azure_extensions_json, parse_azure_fence_auth_json,
+    parse_azure_scheduled_events_json, parse_azure_site_recovery_json,
     parse_azure_vm_generation_json, parse_azure_vm_properties_json,
     parse_basic_environment_json, parse_block_devices_json,
-    parse_btrfs_config_json, parse_chrony_makestep_json, parse_chrony_tracking_json,
-    parse_cluster_events_json, parse_cluster_maintenance_mode_json, parse_cluster_status_json,
-    parse_corosync_config_json, parse_crash_listing_json, parse_crypto_policies_json,
+    parse_btrfs_config_json, parse_chef_client_json,
+    parse_chrony_makestep_json, parse_chrony_tracking_json,
+    parse_cluster_daemon_status_json, parse_cluster_events_json,
+    parse_cluster_maintenance_mode_json, parse_cluster_nodes_json, parse_cluster_status_json,
+    parse_corosync_config_json, parse_corosync_status_json,
+    parse_crash_listing_json, parse_crypto_policies_json,
     parse_df_output_json, parse_distro_packages_json, parse_dlm_service_json,
     parse_emergency_mode_json, parse_eus_version_lock_json, parse_extfrag_json,
-    parse_falcon_sensor_config_json, parse_falcon_sensor_json, parse_firewall_rules_json,
+    parse_falcon_sensor_config_json, parse_falcon_sensor_json, parse_fencing_config_json,
+    parse_firewall_rules_json,
     parse_fips_mode_setup_json, parse_fstab_analysis_json, parse_fstab_json,
     parse_fstrim_json,
     parse_guardicore_agent_json, parse_hana_deadlocks_json, parse_hana_merge_errors_json,
-    parse_hana_oom_json, parse_hana_savepoints_json, parse_huge_pages_json, parse_hv_balloon_json,
+    parse_hana_oom_json, parse_hana_savepoints_json, parse_hosts_file_json,
+    parse_huge_pages_json, parse_hv_balloon_json,
     parse_illumio_json, parse_inspect_disk_results_json, parse_involflt_kernel_version_json,
-    parse_involflt_version_json, parse_kdump_conf_json,
+    parse_involflt_version_json, parse_iscsi_config_json, parse_kdump_conf_json,
     parse_kdump_status_json, parse_kernel_cmdline_json, parse_kernel_reboots_json,
     parse_kernel_tuning_json, parse_leapp_log_json, parse_leapp_report_json,
+    parse_live_migration_json,
     parse_lvm_config_json, parse_ms_defender_config_json, parse_ms_defender_json,
-    parse_mtab_analysis_json, parse_network_interfaces_json, parse_nfs_mounts_json,
+    parse_mtab_analysis_json, parse_network_interfaces_json, parse_network_sysctl_json,
+    parse_nfs_mounts_json, parse_nsswitch_json, parse_nvme_list_json,
     parse_oom_killer_json,
-    parse_os_release_json, parse_pacemaker_high_cpu_json, parse_ptp_clock_source_json,
-    parse_ptp_device_json, parse_raid_config_json, parse_package_distro_mismatch_json,
+    parse_os_release_json, parse_pacemaker_high_cpu_json, parse_pacemaker_resources_json,
+    parse_packet_loss_json,
+    parse_ptp_clock_source_json,
+    parse_ptp_device_json, parse_puppet_agent_json,
+    parse_raid_config_json, parse_package_distro_mismatch_json,
     parse_rhel_rhui_check_json,
-    parse_rhui_config_json, parse_rhui_errors_json, parse_secure_boot_json,
+    parse_rhui_config_json, parse_rhui_errors_json, parse_ring_buffer_json,
+    parse_sap_instance_config_json, parse_sap_instance_errors_json, parse_sbd_config_json,
+    parse_secure_boot_json,
     parse_ssh_service_issues_json,
-    parse_selinux_json, parse_swap_space_json, parse_tuned_profile_json,
+    parse_selinux_errors_json, parse_selinux_json, parse_swap_space_json, parse_tuned_profile_json,
     parse_suse_cloud_register_json, parse_time_sync_json, parse_time_sync_service_json,
     parse_timedatectl_json, parse_trend_micro_json, parse_vmcore_dmesg_json,
     parse_vmcore_summary_json, parse_waagent_config_json, parse_waagent_log_json,
@@ -136,6 +149,187 @@ fn parse_corosync_config(content: &str, source_path: &str) -> PyResult<String> {
 #[pyo3(signature = (content, source_path=""))]
 fn parse_cluster_maintenance_mode(content: &str, source_path: &str) -> PyResult<String> {
     Ok(parse_cluster_maintenance_mode_json(content, source_path))
+}
+
+/// Extract cluster node names and their resolved IP addresses.
+///
+/// Args:
+///     content (str): Contents of ``ha.txt``, ``pacemaker.log``,
+///         ``corosync.conf``, ``cib.xml``, or ``crm_mon*.txt``.
+///
+/// Returns:
+///     str: JSON-encoded object ``{"nodes": [str], "node_to_ip_map":
+///     [{"host": str, "ip": str}]}``. The map is a list rather than an object
+///     so hostnames survive the JS bridge's key mangling.
+#[pyfunction]
+#[pyo3(signature = (content, source_path=""))]
+fn parse_cluster_nodes(content: &str, source_path: &str) -> PyResult<String> {
+    Ok(parse_cluster_nodes_json(content, source_path))
+}
+
+/// Report whether the core cluster daemons (corosync, pacemaker, pcsd, sbd) are running.
+///
+/// Args:
+///     content (str): Contents of ``pcs_status*`` or ``ha.txt``.
+///
+/// Returns:
+///     str: JSON-encoded object ``{"found": bool, "daemons": {...}, "warnings": [...]}``.
+#[pyfunction]
+#[pyo3(signature = (content, source_path=""))]
+fn parse_cluster_daemon_status(content: &str, source_path: &str) -> PyResult<String> {
+    Ok(parse_cluster_daemon_status_json(content, source_path))
+}
+
+/// Parse ``corosync-cfgtool -s`` ring status output.
+///
+/// Args:
+///     content (str): Output of ``corosync-cfgtool -s``.
+///
+/// Returns:
+///     str: JSON-encoded object ``{"found": bool, "rings": [...], "warnings": [...]}``.
+#[pyfunction]
+#[pyo3(signature = (content, source_path=""))]
+fn parse_corosync_status(content: &str, source_path: &str) -> PyResult<String> {
+    Ok(parse_corosync_status_json(content, source_path))
+}
+
+/// Parse ``/etc/hosts`` entries, including those embedded in ``network.txt``.
+///
+/// Args:
+///     content (str): Contents of ``/etc/hosts`` or ``network.txt``.
+///
+/// Returns:
+///     str: JSON-encoded object ``{"found": bool, "entries": [...], "warnings": [...]}``.
+#[pyfunction]
+#[pyo3(signature = (content, source_path=""))]
+fn parse_hosts_file(content: &str, source_path: &str) -> PyResult<String> {
+    Ok(parse_hosts_file_json(content, source_path))
+}
+
+/// Extract Pacemaker resources, their agents, and their current state.
+///
+/// Args:
+///     content (str): Contents of ``cib.xml``, ``crm_mon*.txt``, ``crm*config``,
+///         ``pacemaker.log``, ``ha.txt``, ``pcs_config``, or ``pcs_status``.
+///
+/// Returns:
+///     str: JSON-encoded object ``{"found": bool, "resources": [...], "warnings": [...]}``.
+#[pyfunction]
+#[pyo3(signature = (content, source_path=""))]
+fn parse_pacemaker_resources(content: &str, source_path: &str) -> PyResult<String> {
+    Ok(parse_pacemaker_resources_json(content, source_path))
+}
+
+/// Detect the Azure scheduled-events cluster resource agent and its configuration.
+///
+/// Args:
+///     content (str): Contents of ``pcs_status*``, ``crm_mon*``, or ``cib.xml``.
+///
+/// Returns:
+///     str: JSON-encoded object ``{"found": bool, ...,  "warnings": [...]}``.
+#[pyfunction]
+#[pyo3(signature = (content, source_path=""))]
+fn parse_azure_scheduled_events(content: &str, source_path: &str) -> PyResult<String> {
+    Ok(parse_azure_scheduled_events_json(content, source_path))
+}
+
+/// Extract STONITH/fencing configuration and stonith-enabled state.
+///
+/// Args:
+///     content (str): Contents of ``cib.xml``, ``crm_mon*.txt``, ``crm*config``,
+///         a ``stonith`` capture, ``ha.txt``, ``pcs_config``, or ``pcs_property``.
+///
+/// Returns:
+///     str: JSON-encoded object ``{"found": bool, "devices": [...], "warnings": [...]}``.
+#[pyfunction]
+#[pyo3(signature = (content, source_path=""))]
+fn parse_fencing_config(content: &str, source_path: &str) -> PyResult<String> {
+    Ok(parse_fencing_config_json(content, source_path))
+}
+
+/// Parse SBD (storage-based death) configuration.
+///
+/// Args:
+///     content (str): Contents of ``/etc/sysconfig/sbd`` or ``ha.txt``.
+///
+/// Returns:
+///     str: JSON-encoded object ``{"found": bool, "devices": [...], "warnings": [...]}``.
+#[pyfunction]
+#[pyo3(signature = (content, source_path=""))]
+fn parse_sbd_config(content: &str, source_path: &str) -> PyResult<String> {
+    Ok(parse_sbd_config_json(content, source_path))
+}
+
+/// Detect the authentication mode of the Azure fence agent (SPN vs managed identity).
+///
+/// Args:
+///     content (str): Contents of ``cib.xml``, ``ha.txt``, or ``crm*config``.
+///
+/// Returns:
+///     str: JSON-encoded object ``{"found": bool, "authMode": str, "warnings": [...]}``.
+#[pyfunction]
+#[pyo3(signature = (content, source_path=""))]
+fn parse_azure_fence_auth(content: &str, source_path: &str) -> PyResult<String> {
+    Ok(parse_azure_fence_auth_json(content, source_path))
+}
+
+/// Detect Azure live-migration (host maintenance) events in system logs.
+///
+/// Args:
+///     content (str): Contents of ``pacemaker.log``, ``corosync.log``,
+///         ``cluster.log``, ``ha-log``, ``messages``, ``localmessages``, or
+///         ``journalctl*`` output.
+///
+/// Returns:
+///     str: JSON-encoded object ``{"found": bool, "events": [...], "warnings": [...]}``.
+#[pyfunction]
+#[pyo3(signature = (content, source_path=""))]
+fn parse_live_migration(content: &str, source_path: &str) -> PyResult<String> {
+    Ok(parse_live_migration_json(content, source_path))
+}
+
+/// Extract SAP HANA/NetWeaver instance resources from the cluster configuration.
+///
+/// Args:
+///     content (str): Contents of ``pcs_config`` or ``cib.xml``.
+///
+/// Returns:
+///     str: JSON-encoded object ``{"found": bool, "instances": [...], "warnings": [...]}``.
+#[pyfunction]
+#[pyo3(signature = (content, source_path=""))]
+fn parse_sap_instance_config(content: &str, source_path: &str) -> PyResult<String> {
+    Ok(parse_sap_instance_config_json(content, source_path))
+}
+
+/// Detect SAP instance errors reported in cluster or system logs.
+///
+/// Args:
+///     content (str): Contents of ``analysis.txt``, ``cluster-log.txt``, or
+///         ``/var/log/messages``.
+///
+/// Returns:
+///     str: JSON-encoded object ``{"found": bool, "errors": [...], "warnings": [...]}``.
+#[pyfunction]
+#[pyo3(signature = (content, source_path=""))]
+fn parse_sap_instance_errors(content: &str, source_path: &str) -> PyResult<String> {
+    Ok(parse_sap_instance_errors_json(content, source_path))
+}
+
+/// Parse iSCSI initiator and iscsid configuration.
+///
+/// Args:
+///     content (str): Contents of ``fs-iscsi.txt``, an ``iscsi/`` capture,
+///         ``iscsiadm`` output, ``ha.txt``, or ``initiatorname.iscsi``.
+///
+/// Returns:
+///     str: JSON-encoded object ``{"found": bool, "initiator_name": str,
+///     "iscsid_config": [{"name": str, "value": str}], "warnings": [...]}``.
+///     ``iscsid_config`` is a list rather than an object so dotted setting
+///     names survive the JS bridge's key mangling.
+#[pyfunction]
+#[pyo3(signature = (content, source_path=""))]
+fn parse_iscsi_config(content: &str, source_path: &str) -> PyResult<String> {
+    Ok(parse_iscsi_config_json(content, source_path))
 }
 
 // ============================================================================
@@ -425,6 +619,16 @@ fn parse_xfs_errors(content: &str, source_path: &str) -> PyResult<String> {
     Ok(parse_xfs_errors_json(content, source_path))
 }
 
+/// Detect factual SELinux AVC and SELinux audit errors.
+///
+/// The result contains raw audit records and provenance only. Human-readable
+/// recommendations emitted by ``sealert`` are deliberately excluded.
+#[pyfunction]
+#[pyo3(signature = (content, source_path=""))]
+fn parse_selinux_errors(content: &str, source_path: &str) -> PyResult<String> {
+    Ok(parse_selinux_errors_json(content, source_path))
+}
+
 // ============================================================================
 // Networking
 // ============================================================================
@@ -605,6 +809,32 @@ fn parse_guardicore_agent(content: &str, source_path: &str) -> PyResult<String> 
     Ok(parse_guardicore_agent_json(content, source_path))
 }
 
+/// Detect the Puppet configuration-management agent.
+///
+/// Args:
+///     content (str): Contents of systemd unit listings.
+///
+/// Returns:
+///     str: JSON-encoded object ``{"found", "running", "details"}``.
+#[pyfunction]
+#[pyo3(signature = (content, source_path=""))]
+fn parse_puppet_agent(content: &str, source_path: &str) -> PyResult<String> {
+    Ok(parse_puppet_agent_json(content, source_path))
+}
+
+/// Detect the Chef configuration-management client.
+///
+/// Args:
+///     content (str): Contents of systemd unit listings.
+///
+/// Returns:
+///     str: JSON-encoded object ``{"found", "running", "details"}``.
+#[pyfunction]
+#[pyo3(signature = (content, source_path=""))]
+fn parse_chef_client(content: &str, source_path: &str) -> PyResult<String> {
+    Ok(parse_chef_client_json(content, source_path))
+}
+
 /// Detect Illumio security platform installation.
 ///
 /// Args:
@@ -717,6 +947,20 @@ fn parse_involflt_kernel_version(content: &str, source_path: &str) -> PyResult<S
 // ============================================================================
 // Storage
 // ============================================================================
+
+/// Parse ``nvme list`` output into per-namespace device records.
+///
+/// Args:
+///     content (str): Contents of ``sos_commands/nvme/nvme_list``.
+///
+/// Returns:
+///     str: JSON-encoded object ``{"found", "has_nvme", "drive_count",
+///     "drives": [...]}``.
+#[pyfunction]
+#[pyo3(signature = (content, source_path=""))]
+fn parse_nvme_list(content: &str, source_path: &str) -> PyResult<String> {
+    Ok(parse_nvme_list_json(content, source_path))
+}
 
 /// Parse LVM physical volumes, volume groups, and logical volumes.
 ///
@@ -863,6 +1107,118 @@ fn parse_mtab_analysis(content: &str, source_path: &str) -> PyResult<String> {
 #[pyo3(signature = (content, source_path=""))]
 fn parse_nfs_mounts(content: &str, source_path: &str) -> PyResult<String> {
     Ok(parse_nfs_mounts_json(content, source_path))
+}
+
+/// Anonymize a full analysis-results JSON document (string in, string out).
+///
+/// Mirrors ``supportfile_core::engine::anonymize_results``: one anonymizer walks
+/// every parser result so subnet grouping and pseudonym correlation stay
+/// consistent across sections. Each top-level value is scrubbed separately, as
+/// the Rust CLI does, so both CLIs emit identical tokens.
+///
+/// Args:
+///     json (str): JSON object mapping parser name to that parser's result.
+///     archive_name (str): Optional archive file name; a hostname embedded in it
+///         (``sosreport-<host>-...``, ``scc_<host>_...``) is scrubbed everywhere.
+///
+/// Returns:
+///     str: The scrubbed JSON document, or the input unchanged if it is not
+///     valid JSON.
+#[pyfunction]
+#[pyo3(signature = (json, archive_name=""))]
+fn anonymize_json(json: &str, archive_name: &str) -> PyResult<String> {
+    use supportfile_pii_anonymizer::{extract_archive_hostname, Anonymizer, Config};
+
+    let Ok(mut value) = serde_json::from_str::<serde_json::Value>(json) else {
+        return Ok(json.to_string());
+    };
+
+    let mut anon = Anonymizer::new(Config::default());
+    if let Some(host) = extract_archive_hostname(archive_name) {
+        anon.add_known_hostname(&host);
+    }
+
+    match value.as_object_mut() {
+        Some(map) => map.values_mut().for_each(|v| anon.scrub_json(v)),
+        None => anon.scrub_json(&mut value),
+    }
+
+    Ok(serde_json::to_string(&value).unwrap_or_else(|_| json.to_string()))
+}
+
+/// Detect interface packet loss, drops and errors from ``ip -s link`` counters.
+///
+/// Args:
+///     content (str): Raw text of ``network.txt`` or ``ip -s link`` output.
+///     source_path (str): Optional path of the source file used for provenance.
+///
+/// Returns:
+///     str: JSON-encoded object ``{"found", "interfaces", "warnings",
+///     "source_path"}``.
+#[pyfunction]
+#[pyo3(signature = (content, source_path=""))]
+fn parse_packet_loss(content: &str, source_path: &str) -> PyResult<String> {
+    Ok(parse_packet_loss_json(content, source_path))
+}
+
+/// Report NIC ring buffer sizes and flag undersized rings from ``ethtool -g``.
+///
+/// Args:
+///     content (str): Raw text of ``network.txt`` or ``ethtool -g`` output.
+///     source_path (str): Optional path of the source file used for provenance.
+///
+/// Returns:
+///     str: JSON-encoded object ``{"found", "interfaces", "warnings",
+///     "source_path"}``.
+#[pyfunction]
+#[pyo3(signature = (content, source_path=""))]
+fn parse_ring_buffer(content: &str, source_path: &str) -> PyResult<String> {
+    Ok(parse_ring_buffer_json(content, source_path))
+}
+
+/// Check network-related sysctl settings against Azure/SAP recommendations.
+///
+/// Args:
+///     content (str): Raw text of ``sysctl -a`` output, ``sysctl.conf`` or an
+///         SCC ``env.txt`` that embeds either.
+///     source_path (str): Optional path of the source file used for provenance.
+///
+/// Returns:
+///     str: JSON-encoded object ``{"found", "settings", "warnings",
+///     "source_path"}``.
+#[pyfunction]
+#[pyo3(signature = (content, source_path=""))]
+fn parse_network_sysctl(content: &str, source_path: &str) -> PyResult<String> {
+    Ok(parse_network_sysctl_json(content, source_path))
+}
+
+/// Parse ``/etc/nsswitch.conf`` and flag name-service resolution anomalies.
+///
+/// Detects third-party identity providers (Centrify, SSSD, winbind, LDAP,
+/// NIS, One Identity, PowerBroker), local ``files`` lookups that are missing
+/// or ordered behind a remote provider, ``hosts`` entries without DNS,
+/// ``[NOTFOUND=return]`` actions that shadow later sources, and duplicate or
+/// empty database lines.
+///
+/// Args:
+///     content (str): Raw text of ``/etc/nsswitch.conf``, or an SCC
+///         ``network.txt`` that embeds it.
+///     source_path (str): Optional path of the source file used for provenance.
+///
+/// Returns:
+///     str: JSON-encoded object ``{"found", "entries", "databases",
+///     "third_party_providers", "has_third_party_providers", "warnings",
+///     "source_path"}``.
+///
+/// Example:
+///     >>> import json, supportfile
+///     >>> result = json.loads(supportfile.parse_nsswitch("passwd: files centrify\n"))
+///     >>> result["third_party_providers"][0]["product"]
+///     'Centrify DirectControl'
+#[pyfunction]
+#[pyo3(signature = (content, source_path=""))]
+fn parse_nsswitch(content: &str, source_path: &str) -> PyResult<String> {
+    Ok(parse_nsswitch_json(content, source_path))
 }
 
 /// Detect SAP HANA savepoint activity in indexserver/nameserver trace files.
@@ -1508,6 +1864,7 @@ fn supportfile(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(parse_kernel_reboots, m)?)?;
     m.add_function(wrap_pyfunction!(parse_oom_killer, m)?)?;
     m.add_function(wrap_pyfunction!(parse_xfs_errors, m)?)?;
+    m.add_function(wrap_pyfunction!(parse_selinux_errors, m)?)?;
     m.add_function(wrap_pyfunction!(parse_firewall_rules, m)?)?;
     m.add_function(wrap_pyfunction!(parse_network_interfaces, m)?)?;
     m.add_function(wrap_pyfunction!(parse_distro_packages, m)?)?;
@@ -1533,6 +1890,27 @@ fn supportfile(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(parse_df_output, m)?)?;
     m.add_function(wrap_pyfunction!(parse_mtab_analysis, m)?)?;
     m.add_function(wrap_pyfunction!(parse_nfs_mounts, m)?)?;
+    m.add_function(wrap_pyfunction!(parse_cluster_nodes, m)?)?;
+    m.add_function(wrap_pyfunction!(parse_cluster_daemon_status, m)?)?;
+    m.add_function(wrap_pyfunction!(parse_corosync_status, m)?)?;
+    m.add_function(wrap_pyfunction!(parse_hosts_file, m)?)?;
+    m.add_function(wrap_pyfunction!(parse_pacemaker_resources, m)?)?;
+    m.add_function(wrap_pyfunction!(parse_azure_scheduled_events, m)?)?;
+    m.add_function(wrap_pyfunction!(parse_fencing_config, m)?)?;
+    m.add_function(wrap_pyfunction!(parse_sbd_config, m)?)?;
+    m.add_function(wrap_pyfunction!(parse_azure_fence_auth, m)?)?;
+    m.add_function(wrap_pyfunction!(parse_live_migration, m)?)?;
+    m.add_function(wrap_pyfunction!(parse_sap_instance_config, m)?)?;
+    m.add_function(wrap_pyfunction!(parse_sap_instance_errors, m)?)?;
+    m.add_function(wrap_pyfunction!(parse_iscsi_config, m)?)?;
+    m.add_function(wrap_pyfunction!(parse_puppet_agent, m)?)?;
+    m.add_function(wrap_pyfunction!(parse_chef_client, m)?)?;
+    m.add_function(wrap_pyfunction!(parse_nvme_list, m)?)?;
+    m.add_function(wrap_pyfunction!(anonymize_json, m)?)?;
+    m.add_function(wrap_pyfunction!(parse_packet_loss, m)?)?;
+    m.add_function(wrap_pyfunction!(parse_ring_buffer, m)?)?;
+    m.add_function(wrap_pyfunction!(parse_network_sysctl, m)?)?;
+    m.add_function(wrap_pyfunction!(parse_nsswitch, m)?)?;
     m.add_function(wrap_pyfunction!(parse_hana_savepoints, m)?)?;
     m.add_function(wrap_pyfunction!(parse_hana_deadlocks, m)?)?;
     m.add_function(wrap_pyfunction!(parse_hana_oom, m)?)?;

@@ -14,14 +14,16 @@ pub fn NetworkingSection(data: Value) -> impl IntoView {
     let packet_loss = data.get("packetLoss").cloned().unwrap_or(Value::Null);
     let ring_buffer = data.get("ringBuffer").cloned().unwrap_or(Value::Null);
     let net_sysctl = data.get("networkSysctl").cloned().unwrap_or(Value::Null);
+    let nsswitch = data.get("nsswitchConfig").cloned().unwrap_or(Value::Null);
 
     let has_intf = json_bool(&interfaces, "found");
     let has_fw = json_bool(&firewall, "found");
     let has_pl = json_bool(&packet_loss, "found");
     let has_rb = json_bool(&ring_buffer, "found");
     let has_sysctl = json_bool(&net_sysctl, "found");
+    let has_nss = json_bool(&nsswitch, "found");
 
-    if !has_intf && !has_fw && !has_pl && !has_rb && !has_sysctl {
+    if !has_intf && !has_fw && !has_pl && !has_rb && !has_sysctl && !has_nss {
         return view! {}.into_any();
     }
 
@@ -52,6 +54,7 @@ pub fn NetworkingSection(data: Value) -> impl IntoView {
             {render_packet_loss_section(&packet_loss, has_pl)}
             {render_ring_buffer_section(&ring_buffer, has_rb)}
             {render_network_sysctl_section(&net_sysctl, has_sysctl)}
+            {render_nsswitch_section(&nsswitch, has_nss)}
             {render_firewall_section(&firewall, has_fw)}
         </Section>
     }
@@ -311,10 +314,107 @@ fn render_network_sysctl_section(net_sysctl: &Value, has_sysctl: bool) -> AnyVie
     }.into_any()
 }
 
+fn render_nsswitch_section(nsswitch: &Value, has_nss: bool) -> AnyView {
+    if !has_nss {
+        return view! {}.into_any();
+    }
+    let entries = nsswitch
+        .get("entries")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let providers = nsswitch
+        .get("thirdPartyProviders")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let warnings = warnings_from(nsswitch);
+    let has_warn = !warnings.is_empty();
+    let block_class = if has_warn { "warning-block" } else { "info-block" };
+    let summary = if providers.is_empty() {
+        format!(
+            "{} database{}",
+            entries.len(),
+            if entries.len() == 1 { "" } else { "s" }
+        )
+    } else {
+        let names = providers
+            .iter()
+            .map(|p| json_str(p, "product"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("{} database(s) | {names}", entries.len())
+    };
+
+    view! {
+        <details class=block_class open=has_warn>
+            <summary>
+                "Name service switch (nsswitch.conf) "
+                <span class="text-muted">{format!("({summary})")}</span>
+            </summary>
+            <div class="section-body">
+                {(!entries.is_empty()).then(|| view! {
+                    <table class="kv-table">
+                        <thead>
+                            <tr>
+                                <th class="kv-label">"Database"</th>
+                                <th class="kv-label">"Sources"</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {entries.iter().cloned().map(|e| {
+                                let db = json_str(&e, "database");
+                                let services = e
+                                    .get("services")
+                                    .and_then(|v| v.as_array())
+                                    .map(|a| a.iter().map(|s| s.as_str().unwrap_or_default().to_string()).collect::<Vec<_>>().join(" "))
+                                    .unwrap_or_default();
+                                view! {
+                                    <tr>
+                                        <td class="kv-value"><code>{db}</code></td>
+                                        <td class="kv-value">{services}</td>
+                                    </tr>
+                                }
+                            }).collect::<Vec<_>>()}
+                        </tbody>
+                    </table>
+                })}
+                {(!providers.is_empty()).then(|| view! {
+                    <ul>
+                        {providers.iter().cloned().map(|p| {
+                            let product = json_str(&p, "product");
+                            let service = json_str(&p, "service");
+                            let dbs = p
+                                .get("databases")
+                                .and_then(|v| v.as_array())
+                                .map(|a| a.iter().map(|s| s.as_str().unwrap_or_default().to_string()).collect::<Vec<_>>().join(", "))
+                                .unwrap_or_default();
+                            view! {
+                                <li class="text-warning">
+                                    {format!("Identity provider: {product} ({service}) on {dbs}")}
+                                </li>
+                            }
+                        }).collect::<Vec<_>>()}
+                    </ul>
+                })}
+                {has_warn.then(|| view! {
+                    <ul>
+                        {warnings.iter().cloned().map(|w| {
+                            let sev = json_str(&w, "severity");
+                            let cls = warning_class(&sev);
+                            let msg = json_str(&w, "message");
+                            view! { <li class=cls>{msg}</li> }
+                        }).collect::<Vec<_>>()}
+                    </ul>
+                })}
+            </div>
+        </details>
+    }.into_any()
+}
+
 fn render_interfaces_section(
     ifaces: &[Value],
-    has_intf: bool,
-    accel_net: bool,
+    has_intf: bool,    accel_net: bool,
     raw_sections: &Value,
 ) -> AnyView {
     let iface_count = ifaces.len();

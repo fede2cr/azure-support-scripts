@@ -184,16 +184,17 @@ test.describe('Cluster Parsers', () => {
     await page.waitForFunction(
       () => {
         const output = document.getElementById('output');
-        return output && /Cluster Events Detected|pacemaker-controld|High CPU load detected/.test(output.textContent || '');
+        return output && /Pacemaker High CPU Load/.test(output.textContent || '');
       },
       { timeout: 60000 }
     );
 
     const resultText = await page.locator('#output').textContent();
-    expect(resultText).toContain('Cluster Events Detected');
+    expect(resultText).toContain('Pacemaker High CPU Load');
     expect(resultText).toContain('pacemaker-controld');
     expect(resultText).toMatch(/High CPU load detected|23\.270000/);
     expect(resultText).toContain('node01');
+    expect(resultText).toMatch(/23\.27% CPU load/);
   });
 
   test('confirms Getty/tty messages are not shown as cluster resource events', async ({ page }) => {

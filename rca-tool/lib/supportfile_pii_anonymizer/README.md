@@ -16,7 +16,9 @@ transform them — but runs inline in Rust with no spaCy/NER engine.
 - **Subnet-preserving IPs.** Two addresses on the same subnet map to the same
   `net-*` label, keeping topology visible without exposing real addresses.
   Loopback and well-known Azure infra addresses (IMDS `169.254.169.254`,
-  WireServer `168.63.129.16`) are left intact.
+  WireServer `168.63.129.16`) are left intact. Private ranges (RFC 1918
+  `10/8`, `172.16/12`, `192.168/16`, link-local `169.254/16`, and IPv6 ULA /
+  link-local) are non-PII and are also left verbatim.
 - **Fail-safe secrets.** Passwords/keys/tokens/PEM blocks are fully redacted.
 
 ## Usage
@@ -27,13 +29,13 @@ use supportfile_pii_anonymizer::{Anonymizer, Config};
 let mut anon = Anonymizer::new(Config::default());
 
 // Optionally seed known CIDRs so bare occurrences group correctly:
-anon.hint_cidr("10.1.2.34", 24);
+anon.hint_cidr("203.0.113.34", 24);
 
-let clean = anon.scrub_text("node hana01 at 10.1.2.34 failed; peer 10.1.2.99");
+let clean = anon.scrub_text("node hana01 at 203.0.113.34 failed; peer 203.0.113.99");
 // -> "... at [[IPv4|net-A|h1]] failed; peer [[IPv4|net-A|h2]]"
 
 // Structured data (feature = "serde_json", on by default):
-let mut v = serde_json::json!({ "rawLine": "10.9.0.5 down", "line": 12 });
+let mut v = serde_json::json!({ "rawLine": "198.51.100.5 down", "line": 12 });
 anon.scrub_json(&mut v); // string leaves scrubbed, numbers untouched
 ```
 

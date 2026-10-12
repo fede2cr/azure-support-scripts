@@ -151,6 +151,17 @@ const azureFenceAuthParser = {
 // Events and live migration
 // ---------------------------------------------------------------------------
 
+const highCpuEventsParser = {
+    multiFile: true,
+    processAllRotations: true,
+    filePattern: /\/(pacemaker\.log|corosync\.log|cluster\.log|ha-log|messages|localmessages|journalctl[^\/]*)(?:[.-]\d+)?(?:\.txt)?(?:\.gz)?$|\/ha\.txt$/,
+    parse: function(content, filename, _lines) {
+        // Rust returns a bare array; the worker accumulator needs {count, events}.
+        const events = _wasmCall('parsePacemakerHighCpu', content, filename, []);
+        return { found: events.length > 0, count: events.length, events: events };
+    }
+};
+
 const clusterEventsParser = {
     multiFile: true,
     processAllRotations: true,
@@ -222,6 +233,7 @@ const createClusterParsers = function() {
         clusterDaemonStatus: clusterDaemonStatusParser,
         azureScheduledEvents: azureScheduledEventsParser,
         fencingConfig: fencingConfigParser,
+        highCpuEvents: highCpuEventsParser,
         clusterEvents: clusterEventsParser,
         liveMigration: liveMigrationParser,
         sapInstanceConfig: sapInstanceConfigParser,

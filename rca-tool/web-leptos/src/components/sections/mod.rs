@@ -11,5 +11,6 @@ pub mod merge_errors;
 pub mod networking;
 pub mod oom;
 pub mod os_tuning;
+pub mod selinux;
 pub mod services;
 pub mod storage;

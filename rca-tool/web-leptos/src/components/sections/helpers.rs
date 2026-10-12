@@ -94,3 +94,62 @@ pub fn json_array(v: &serde_json::Value, key: &str) -> Vec<serde_json::Value> {
         .cloned()
         .unwrap_or_default()
 }
+
+pub fn dash_if_empty(value: String) -> String {
+    if value.trim().is_empty() {
+        "-".to_string()
+    } else {
+        value
+    }
+}
+
+/// Render a list of warning / recommendation objects (`UnixWarning` shape).
+pub fn render_findings(
+    title: &str,
+    block_class: &str,
+    items: Vec<serde_json::Value>,
+) -> Option<AnyView> {
+    if items.is_empty() {
+        return None;
+    }
+    let title = title.to_string();
+    let block_class = block_class.to_string();
+    Some(
+        view! {
+            <div class=block_class>
+                <p><strong>{title}</strong></p>
+                <ul class="disk-list">
+                    {items
+                        .iter()
+                        .map(|item| {
+                            let message = json_str(item, "message");
+                            let recommendation = json_str(item, "recommendation");
+                            let doc = json_str(item, "documentationUrl");
+                            view! {
+                                <li>
+                                    {message}
+                                    {(!recommendation.is_empty()).then(|| view! {
+                                        <div><small>{recommendation}</small></div>
+                                    })}
+                                    {(!doc.is_empty()).then(|| view! {
+                                        <div>
+                                            <a
+                                                href=doc.clone()
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                class="text-info"
+                                            >
+                                                "View Documentation"
+                                            </a>
+                                        </div>
+                                    })}
+                                </li>
+                            }
+                        })
+                        .collect::<Vec<_>>()}
+                </ul>
+            </div>
+        }
+        .into_any(),
+    )
+}

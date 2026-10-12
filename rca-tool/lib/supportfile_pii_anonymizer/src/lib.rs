@@ -13,7 +13,8 @@
 //!   relationships survive (same host → same pseudonym).
 //! - **Subnet-preserving IPs:** two addresses on the same subnet map to the
 //!   same `net-*` label, so topology stays visible without exposing real
-//!   addresses. Loopback and well-known Azure infra addresses are left intact.
+//!   addresses. Loopback, well-known Azure infra addresses, and private ranges
+//!   (RFC 1918, link-local, IPv6 ULA) are left intact.
 //! - **Offline:** no network, no model downloads.
 //!
 //! # Example
@@ -21,10 +22,10 @@
 //! use supportfile_pii_anonymizer::{Anonymizer, Config};
 //!
 //! let mut anon = Anonymizer::new(Config::default());
-//! let out = anon.scrub_text("node at 10.1.2.34 and 10.1.2.99 talk to 127.0.0.1");
-//! // 10.1.2.34 and 10.1.2.99 share a subnet label; 127.0.0.1 is untouched.
+//! let out = anon.scrub_text("node at 203.0.113.34 and 203.0.113.99 talk to 127.0.0.1");
+//! // 203.0.113.34 and 203.0.113.99 share a subnet label; 127.0.0.1 is untouched.
 //! assert!(out.contains("127.0.0.1"));
-//! assert!(!out.contains("10.1.2.34"));
+//! assert!(!out.contains("203.0.113.34"));
 //! ```
 
 mod allowlist;

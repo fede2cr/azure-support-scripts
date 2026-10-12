@@ -7,13 +7,14 @@ fn anon() -> Anonymizer {
 #[test]
 fn ipv4_same_subnet_shares_label_different_subnet_differs() {
     let mut a = anon();
-    let out = a.scrub_text("if0 10.1.2.34, if1 10.1.2.99, if2 10.9.0.5");
+    // Public (documentation) ranges: private IPs are allowlisted (see below).
+    let out = a.scrub_text("if0 203.0.113.34, if1 203.0.113.99, if2 198.51.100.5");
     // Same /24 -> same net label; different subnet -> different label.
     assert!(out.contains("[[IPv4|net-A|h1]]"), "{out}");
     assert!(out.contains("[[IPv4|net-A|h2]]"), "{out}");
     assert!(out.contains("[[IPv4|net-B|h1]]"), "{out}");
-    assert!(!out.contains("10.1.2.34"), "{out}");
-    assert!(!out.contains("10.9.0.5"), "{out}");
+    assert!(!out.contains("203.0.113.34"), "{out}");
+    assert!(!out.contains("198.51.100.5"), "{out}");
 }
 
 #[test]
@@ -26,20 +27,41 @@ fn ipv4_loopback_and_azure_infra_preserved() {
 }
 
 #[test]
+fn ipv4_private_and_link_local_ranges_preserved() {
+    let mut a = anon();
+    // RFC 1918 private ranges and 169.254.0.0/16 link-local are non-PII and
+    // must be left verbatim, just like loopback / Azure infra.
+    let input = "a 10.20.30.40 b 172.16.99.5 c 192.168.1.10 d 169.254.0.5";
+    let out = a.scrub_text(input);
+    assert_eq!(out, input, "private/link-local IPv4 must be untouched:\n{out}");
+}
+
+#[test]
 fn ipv4_preserves_cidr_suffix() {
     let mut a = anon();
-    let out = a.scrub_text("addr 10.1.2.34/24");
+    let out = a.scrub_text("addr 203.0.113.34/24");
     assert!(out.contains("[[IPv4|net-A|h1]]/24"), "{out}");
 }
 
 #[test]
 fn ipv6_groups_by_64_and_preserves_loopback() {
     let mut a = anon();
-    let out = a.scrub_text("a fe80::1ff:fe23:4567:890a b fe80::1ff:fe23:4567:890b lo ::1");
+    // Global-unicast documentation prefix (2001:db8::/32); link-local fe80:: is
+    // now allowlisted, so use routable addresses to exercise tokenization.
+    let out = a.scrub_text("a 2001:db8:1:2::a b 2001:db8:1:2::b lo ::1");
     assert!(out.contains("[[IPv6|net-A|h1]]"), "{out}");
     assert!(out.contains("[[IPv6|net-A|h2]]"), "{out}");
     assert!(out.contains("::1"), "{out}");
-    assert!(!out.contains("890a"), "{out}");
+    assert!(!out.contains("2001:db8:1:2::a"), "{out}");
+}
+
+#[test]
+fn ipv6_link_local_and_ula_preserved() {
+    let mut a = anon();
+    // Link-local (fe80::/10) and ULA (fc00::/7) are non-PII, left verbatim.
+    let input = "ll fe80::1ff:fe23:4567:890a ula fd00:1234:5678::1";
+    let out = a.scrub_text(input);
+    assert_eq!(out, input, "link-local/ULA IPv6 must be untouched:\n{out}");
 }
 
 #[test]
@@ -197,21 +219,21 @@ fn version_strings_are_not_treated_as_ips() {
     let mut v = serde_json::json!({
         "agentVersion": "2.14.0.1",
         "kernelRelease": "5.14.0.1",
-        "peerIp": "10.0.0.4"
+        "peerIp": "203.0.113.4"
     });
     a.scrub_json(&mut v);
     assert_eq!(v["agentVersion"], "2.14.0.1");
     assert_eq!(v["kernelRelease"], "5.14.0.1");
-    assert_ne!(v["peerIp"], "10.0.0.4", "real IP must still be scrubbed");
+    assert_ne!(v["peerIp"], "203.0.113.4", "real IP must still be scrubbed");
 }
 
 #[test]
 fn hint_cidr_groups_bare_ip_occurrences() {
     let mut a = anon();
-    a.hint_cidr("10.5.0.10", 16);
-    a.hint_cidr("10.5.9.20", 16);
-    let out = a.scrub_text("x 10.5.0.10 y 10.5.9.20");
-    // Both in 10.5.0.0/16 -> same net label.
+    a.hint_cidr("198.51.100.10", 16);
+    a.hint_cidr("198.51.9.20", 16);
+    let out = a.scrub_text("x 198.51.100.10 y 198.51.9.20");
+    // Both in 198.51.0.0/16 -> same net label.
     assert!(out.contains("[[IPv4|net-A|h1]]"), "{out}");
     assert!(out.contains("[[IPv4|net-A|h2]]"), "{out}");
 }
@@ -222,9 +244,9 @@ fn scrub_json_walks_string_leaves_only() {
     let mut a = anon();
     let mut v = serde_json::json!({
         "sourceLine": 42,
-        "rawLine": "node at 10.1.2.34 failed",
-        "nested": { "ip": "10.1.2.99", "count": 3 },
-        "list": ["10.9.0.5", 7]
+        "rawLine": "node at 203.0.113.34 failed",
+        "nested": { "ip": "203.0.113.99", "count": 3 },
+        "list": ["198.51.100.5", 7]
     });
     a.scrub_json(&mut v);
     // Numbers and non-string leaves are preserved.
@@ -236,11 +258,11 @@ fn scrub_json_walks_string_leaves_only() {
     let raw = v["rawLine"].as_str().unwrap();
     let nip = v["nested"]["ip"].as_str().unwrap();
     let lip = v["list"][0].as_str().unwrap();
-    assert!(!raw.contains("10.1.2.34"), "{raw}");
-    assert!(!nip.contains("10.1.2.99"), "{nip}");
-    assert!(!lip.contains("10.9.0.5"), "{lip}");
+    assert!(!raw.contains("203.0.113.34"), "{raw}");
+    assert!(!nip.contains("203.0.113.99"), "{nip}");
+    assert!(!lip.contains("198.51.100.5"), "{lip}");
 
-    // The two 10.1.2.x addresses share a subnet label; 10.9.0.5 differs.
+    // The two 203.0.113.x addresses share a subnet label; 198.51.100.5 differs.
     let net = |s: &str| -> String {
         let i = s.find("net-").unwrap();
         s[i..s[i..].find('|').map(|j| i + j).unwrap()].to_string()

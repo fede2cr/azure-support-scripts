@@ -13,7 +13,8 @@
  *     MAC tokens keep the vendor OUI (`[[MAC|00:0d:3a|devN]]`).
  *   - Subnet correlation survives: the two same-/24 addresses map to one net
  *     label; the third subnet maps to a different label.
- *   - Loopback (`127.0.0.1`) is diagnostic, not PII, and is preserved verbatim.
+ *   - Loopback (`127.0.0.1`) and RFC 1918 private addresses (`10.20.30.40`) are
+ *     diagnostic, not PII, and are preserved verbatim.
  */
 import { test, expect } from './coverage-fixture.js';
 import { uploadAndWaitForAnalysis, navigateToApp } from './test-helpers.js';
@@ -33,7 +34,7 @@ test.describe('PII anonymization (default-on)', () => {
 
     // 1. No raw PII survives anywhere in the rendered output.
     const rawPii = [
-      '10.20.30.40', '10.20.30.41', '172.16.99.5',
+      '203.0.113.40', '203.0.113.41', '198.51.100.5',
       '00:0d:3a:aa:bb:cc', '00:0d:3a:aa:bb:cd', '00:0d:3a:dd:ee:ff',
       'jdoe@contoso.example.com', 'S3cr3tP@ssw0rd',
       '11111111-2222-3333-4444-555555555555',
@@ -46,6 +47,9 @@ test.describe('PII anonymization (default-on)', () => {
     // 2. IPs become subnet-preserving tokens; MAC keeps the vendor OUI.
     expect(html).toMatch(/\[\[IPv4\|net-[A-Z]+\|h\d+\]\]/);
     expect(html).toContain('[[MAC|00:0d:3a|');
+
+    // 2b. Private (RFC 1918) addresses are non-PII and preserved verbatim.
+    expect(html, 'private IP must be preserved verbatim').toContain('10.20.30.40');
 
     // 3. Subnet correlation preserved: at least two distinct subnet labels, and
     //    at least one subnet contains two distinct hosts (the same-/24 pair).

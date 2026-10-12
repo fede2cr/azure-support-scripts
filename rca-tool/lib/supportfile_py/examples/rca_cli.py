@@ -53,7 +53,7 @@ except ImportError as exc:  # pragma: no cover
 @dataclass
 class ParserSpec:
     name: str                            # output key in the results dict
-    func: Callable[[str], str]           # supportfile.parse_* function
+    func: Callable[[str, str], str]      # supportfile.parse_* (content, source_path)
     file_pattern: Pattern[str]
     multi_file: bool = False             # if True, merge results across files
 
@@ -87,6 +87,61 @@ PARSERS: List[ParserSpec] = [
     ParserSpec(
         "clusterMaintenanceMode", supportfile.parse_cluster_maintenance_mode,
         _re(r"cib\.xml$|/crm_mon.*\.txt$|/ha\.txt$"),
+    ),
+    ParserSpec(
+        "clusterNodes", supportfile.parse_cluster_nodes,
+        _re(r"/(ha\.txt|pacemaker\.log|corosync\.conf|cib\.xml|crm_mon.*\.txt)$"),
+    ),
+    ParserSpec(
+        "clusterDaemonStatus", supportfile.parse_cluster_daemon_status,
+        _re(r"/pcs_status|/ha\.txt$"),
+    ),
+    ParserSpec(
+        "corosyncStatus", supportfile.parse_corosync_status,
+        _re(r"corosync-cfgtool.*-s$"),
+    ),
+    ParserSpec(
+        "hostsFile", supportfile.parse_hosts_file,
+        _re(r"/(network\.txt|etc/hosts|etc_hosts)$|/[^/]+/(hosts)$"),
+    ),
+    ParserSpec(
+        "pacemakerResources", supportfile.parse_pacemaker_resources,
+        _re(r"cib\.xml$|/crm_mon.*\.txt$|/crm.*config$|pacemaker\.log$|/ha\.txt$"
+            r"|/pcs_config$|/pcs_status"),
+    ),
+    ParserSpec(
+        "azureScheduledEvents", supportfile.parse_azure_scheduled_events,
+        _re(r"/pcs_status.*|/crm_mon.*|cib\.xml$"),
+    ),
+    ParserSpec(
+        "fencingConfig", supportfile.parse_fencing_config,
+        _re(r"cib\.xml$|/crm_mon.*\.txt$|/crm.*config$|stonith|/ha\.txt$"
+            r"|/pcs_config$|/pcs_property"),
+    ),
+    ParserSpec(
+        "sbdConfig", supportfile.parse_sbd_config,
+        _re(r"/sbd$|/sysconfig/sbd|/ha\.txt$"),
+    ),
+    ParserSpec(
+        "azureFenceAuth", supportfile.parse_azure_fence_auth,
+        _re(r"cib\.xml$|/ha\.txt$|/crm.*config$"),
+    ),
+    ParserSpec(
+        "liveMigration", supportfile.parse_live_migration,
+        _re(r"/(pacemaker\.log|corosync\.log|cluster\.log|ha-log|messages|localmessages"
+            r"|journalctl[^/]*)(?:[.-]\d+)?(?:\.txt)?$"),
+    ),
+    ParserSpec(
+        "sapInstanceConfig", supportfile.parse_sap_instance_config,
+        _re(r"/pcs_config|/cib\.xml$"),
+    ),
+    ParserSpec(
+        "sapInstanceErrors", supportfile.parse_sap_instance_errors,
+        _re(r"/analysis\.txt$|/cluster-log\.txt$|/messages|/var/log/messages"),
+    ),
+    ParserSpec(
+        "iscsiConfig", supportfile.parse_iscsi_config,
+        _re(r"fs-iscsi\.txt$|/iscsi/|/iscsiadm|/ha\.txt$|initiatorname\.iscsi$"),
     ),
 
     # ----- Automation ------------------------------------------------------
@@ -151,6 +206,12 @@ PARSERS: List[ParserSpec] = [
         _re(r"/(messages|localmessages|journalctl[^/]*)(?:[.-]\d+)?(?:\.txt)?$"),
         multi_file=True,
     ),
+    ParserSpec(
+        "selinuxErrors", supportfile.parse_selinux_errors,
+        _re(r"/(audit\.log|messages|localmessages|journalctl[^/]*)(?:[.-]\d+)?(?:\.txt)?(?:\.gz)?$|"
+            r"sos_commands/selinux/(ausearch|sealert)[^/]*$|/selinux\.txt$"),
+        multi_file=True,
+    ),
 
     # ----- Networking ------------------------------------------------------
     ParserSpec(
@@ -170,6 +231,26 @@ PARSERS: List[ParserSpec] = [
             r"etc/sysconfig/network/(?:network/)?ifcfg-|"
             r"etc/netplan/|var/log/cloud-init-output\.log$|(?:^|/)messages$"),
         multi_file=True,
+    ),
+    ParserSpec(
+        "packetLoss", supportfile.parse_packet_loss,
+        _re(r"network\.txt$|sos_commands/networking/ip_-s_-d_link$|"
+            r"sos_commands/networking/ip_-s_link$"),
+        multi_file=True,
+    ),
+    ParserSpec(
+        "ringBuffer", supportfile.parse_ring_buffer,
+        _re(r"network\.txt$|sos_commands/networking/ethtool_-g_\w+"),
+        multi_file=True,
+    ),
+    ParserSpec(
+        "networkSysctl", supportfile.parse_network_sysctl,
+        _re(r"/env\.txt$|/sysctl\.conf$|sos_commands/kernel/sysctl_-a$|etc/sysctl\.d/"),
+        multi_file=True,
+    ),
+    ParserSpec(
+        "nsswitchConfig", supportfile.parse_nsswitch,
+        _re(r"etc/nsswitch\.conf$|/nsswitch\.conf$|network\.txt$"),
     ),
 
     # ----- Packages --------------------------------------------------------
@@ -197,6 +278,14 @@ PARSERS: List[ParserSpec] = [
     ),
     ParserSpec(
         "guardicoreAgent", supportfile.parse_guardicore_agent,
+        _re(r"(?:sos_commands/systemd/systemctl_list-unit-files|systemd-status\.txt)$"),
+    ),
+    ParserSpec(
+        "puppetAgent", supportfile.parse_puppet_agent,
+        _re(r"(?:sos_commands/systemd/systemctl_list-unit-files|systemd-status\.txt)$"),
+    ),
+    ParserSpec(
+        "chefClient", supportfile.parse_chef_client,
         _re(r"(?:sos_commands/systemd/systemctl_list-unit-files|systemd-status\.txt)$"),
     ),
     ParserSpec(
@@ -234,6 +323,10 @@ PARSERS: List[ParserSpec] = [
 
     # ----- Storage ---------------------------------------------------------
     ParserSpec(
+        "nvmeList", supportfile.parse_nvme_list,
+        _re(r"sos_commands/nvme/nvme_list$"),
+    ),
+    ParserSpec(
         "lvmConfig", supportfile.parse_lvm_config,
         _re(r"/(lvm\.txt|pvs\.txt|vgs\.txt|lvs\.txt|pvdisplay|vgdisplay|lvdisplay)$|"
             r"/lvm2/pvs_|/lvm2/vgs_|/lvm2/lvs_"),
@@ -262,6 +355,12 @@ PARSERS: List[ParserSpec] = [
     ParserSpec(
         "mtabAnalysis", supportfile.parse_mtab_analysis,
         _re(r"/etc/mtab$|/proc/mounts$|/proc/self/mounts$|/fs-diskio\.txt$|/mount_-l$|/mount$"),
+    ),
+    ParserSpec(
+        "nfsMounts", supportfile.parse_nfs_mounts,
+        _re(r"/etc/fstab$|/etc/mtab$|/proc/mounts$|/proc/self/mounts$|/fs-diskio\.txt$|"
+            r"/mount_-l$|/mount$"),
+        multi_file=True,
     ),
 
     # ----- OS / filesystem -------------------------------------------------
@@ -360,6 +459,29 @@ PARSERS: List[ParserSpec] = [
         "kernelCmdline", supportfile.parse_kernel_cmdline,
         _re(r"/proc/cmdline$|/boot\.txt$"),
     ),
+    ParserSpec(
+        "secureBoot", supportfile.parse_secure_boot,
+        _re(r"sos_commands/boot/mokutil_--sb-state$"),
+    ),
+
+    # ----- OS tuning (SAP-on-Azure QualityCheck ports) ----------------------
+    ParserSpec(
+        "tunedProfile", supportfile.parse_tuned_profile,
+        _re(r"sos_commands/tuned/tuned-adm_active$|/tuned-adm.*\.txt$"),
+    ),
+    ParserSpec(
+        "selinux", supportfile.parse_selinux,
+        _re(r"/etc/selinux/config$|sos_commands/selinux/sestatus$|/selinux\.txt$"),
+    ),
+    ParserSpec(
+        "swapSpace", supportfile.parse_swap_space,
+        _re(r"/proc/meminfo$"),
+    ),
+    ParserSpec(
+        "fstrim", supportfile.parse_fstrim,
+        _re(r"sos_commands/systemd/systemctl_list-unit-files$|/systemd-status\.txt$|"
+            r"sos_commands/.*fstrim.*$"),
+    ),
 
     # ----- Leapp -----------------------------------------------------------
     ParserSpec(
@@ -388,6 +510,28 @@ PARSERS: List[ParserSpec] = [
     ParserSpec(
         "kdumpConf", supportfile.parse_kdump_conf,
         _re(r"etc/kdump\.conf$"),
+    ),
+
+    # ----- SAP HANA traces -------------------------------------------------
+    ParserSpec(
+        "hanaSavepoints", supportfile.parse_hana_savepoints,
+        _re(r"/(indexserver|nameserver)[^/]*\.trc$"),
+        multi_file=True,
+    ),
+    ParserSpec(
+        "hanaDeadlocks", supportfile.parse_hana_deadlocks,
+        _re(r"/(indexserver|nameserver)[^/]*\.trc$"),
+        multi_file=True,
+    ),
+    ParserSpec(
+        "hanaOom", supportfile.parse_hana_oom,
+        _re(r"/(indexserver|nameserver)[^/]*\.trc$"),
+        multi_file=True,
+    ),
+    ParserSpec(
+        "hanaMergeErrors", supportfile.parse_hana_merge_errors,
+        _re(r"/(indexserver|nameserver)[^/]*\.trc$"),
+        multi_file=True,
     ),
 ]
 
@@ -537,7 +681,7 @@ def _process_one(
 
     for spec in matching:
         try:
-            raw = spec.func(content)
+            raw = spec.func(content, member_path)
             parsed = json.loads(raw)
         except (ValueError, OSError) as exc:
             if debug:
@@ -567,7 +711,31 @@ def process_archive(
     """Stream every file in *path* through any matching parser.
 
     Supports tar (`.tar`, `.tar.gz`, `.tar.xz`, `.tgz`) and `.zip` archives.
+
+    Results are PII-anonymized before being returned, so every consumer of this
+    module gets scrubbed data. Mirrors ``supportfile_core::engine::process_archive``.
     """
+    results = _process_archive_inner(path, parser_filter=parser_filter, debug=debug)
+    _anonymize_results(results, path)
+    return results
+
+
+def _anonymize_results(results: ArchiveResults, path: str) -> None:
+    """Scrub every parser result in place with one shared anonymizer."""
+    if not results.parser_results:
+        return
+    scrubbed = supportfile.anonymize_json(
+        json.dumps(results.parser_results), os.path.basename(path)
+    )
+    results.parser_results.update(json.loads(scrubbed))
+
+
+def _process_archive_inner(
+    path: str,
+    *,
+    parser_filter: Optional[str] = None,
+    debug: bool = False,
+) -> ArchiveResults:
     if parser_filter:
         active = [p for p in PARSERS if p.name == parser_filter]
         if not active:
@@ -651,13 +819,28 @@ def _list_warnings(items: Any, indent: str = "    ") -> str:
     for w in items:
         if isinstance(w, dict):
             severity = (w.get("severity") or "warn").upper()
-            msg = w.get("message") or w.get("type") or json.dumps(w)
+            # Compact + sorted to match serde_json's fallback rendering in the Rust CLI.
+            msg = w.get("message") or w.get("type") or json.dumps(
+                w, separators=(",", ":"), sort_keys=True
+            )
             out += f"{indent}[{severity}] {msg}\n"
             if w.get("recommendation"):
                 out += f"{indent}        Recommendation: {w['recommendation']}\n"
         else:
             out += f"{indent}[WARN] {w}\n"
     return out
+
+
+def _format_kb(kb: Any) -> str:
+    """Render a kibibyte count the same way the web UI formats swap sizes."""
+    if not isinstance(kb, int) or kb < 0:
+        return "-"
+    value = float(kb) * 1024.0
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if value < 1024.0 or unit == "TB":
+            return f"{value:.2f} {unit}"
+        value /= 1024.0
+    return f"{value:.2f} TB"
 
 
 def _has_data(value: Any) -> bool:
@@ -716,7 +899,10 @@ def format_text(results: ArchiveResults) -> str:  # noqa: C901 - long but linear
         out += "\n"
 
     # ---- Cluster -----
-    cluster_keys = ("corosyncConfig", "clusterStatus", "clusterMaintenanceMode")
+    cluster_keys = ("corosyncConfig", "clusterStatus", "clusterMaintenanceMode",
+                    "clusterNodes", "clusterDaemonStatus", "corosyncStatus",
+                    "pacemakerResources", "fencingConfig", "sbdConfig",
+                    "azureFenceAuth", "azureScheduledEvents", "liveMigration")
     if any(_has_data(r.get(k)) for k in cluster_keys):
         out += _section("CLUSTER")
         cc = r.get("corosyncConfig") or {}
@@ -751,11 +937,81 @@ def format_text(results: ArchiveResults) -> str:  # noqa: C901 - long but linear
             res = mm.get("resources_in_maintenance") or []
             if res:
                 out += f"    Resources in maintenance: {len(res)}\n"
+        cn = r.get("clusterNodes") or {}
+        if cn.get("nodes"):
+            out += f"  Nodes: {', '.join(cn['nodes'])}\n"
+            for entry in cn.get("node_to_ip_map") or []:
+                out += f"    - {entry.get('host', '')}: {entry.get('ip', '')}\n"
+        ds = r.get("clusterDaemonStatus") or {}
+        if _has_data(ds):
+            out += "  Daemons:\n"
+            for name, st in sorted((ds.get("daemons") or {}).items()):
+                def _flag(key, st=st):
+                    v = st.get(key)
+                    return "unknown" if v is None else ("yes" if v else "no")
+                out += f"    {name}: active={_flag('active')} enabled={_flag('enabled')}\n"
+            out += _list_warnings(ds.get("warnings"))
+        cst = r.get("corosyncStatus") or {}
+        if _has_data(cst):
+            out += f"  Corosync rings: {len(cst.get('rings') or [])}\n"
+            out += _list_warnings(cst.get("warnings"))
+        pr = r.get("pacemakerResources") or {}
+        if _has_data(pr):
+            out += (f"  Resources: {pr.get('count', 0)} "
+                    f"({pr.get('groups_count', 0)} group(s), "
+                    f"{pr.get('failed_actions_count', 0)} failed action(s))\n")
+        fc = r.get("fencingConfig") or {}
+        if _has_data(fc):
+            st_en = fc.get("stonith_enabled")
+            stonith = "unknown" if st_en is None else ("enabled" if st_en else "DISABLED")
+            out += f"  Fencing: {fc.get('count', 0)} device(s), stonith {stonith}\n"
+            for d in fc.get("fencing_devices") or []:
+                out += f"    - {d.get('name', '')}: {d.get('agent', '')}\n"
+        sb = r.get("sbdConfig") or {}
+        if _has_data(sb):
+            out += f"  SBD: {len(sb.get('sbd_devices') or [])} device(s)\n"
+            for label, key in (("Watchdog timeout", "sbd_watchdog_timeout"),
+                               ("Start mode", "sbd_startmode"),
+                               ("Timeout action", "sbd_timeout_action")):
+                if sb.get(key) is not None:
+                    out += f"    {label}: {sb[key]}\n"
+            out += _list_warnings(sb.get("warnings"))
+        af = r.get("azureFenceAuth") or {}
+        if _has_data(af):
+            out += f"  Azure fence auth: {af.get('auth_method') or 'unknown'}\n"
+            out += _list_warnings(af.get("warnings"))
+        se = r.get("azureScheduledEvents") or {}
+        if _has_data(se):
+            configured = se.get("health_azure_configured")
+            out += ("  Azure scheduled events: "
+                    f"{'health-azure configured' if configured else 'health-azure NOT configured'}\n")
+            out += _list_warnings(se.get("warnings"))
+        lm = r.get("liveMigration") or {}
+        if _has_data(lm):
+            out += f"  Live migration events: {len(lm.get('events') or [])}\n"
+        out += "\n"
+
+    # ---- SAP -----
+    if any(_has_data(r.get(k)) for k in ("sapInstanceConfig", "sapInstanceErrors")):
+        out += _section("SAP")
+        sc = r.get("sapInstanceConfig") or {}
+        if _has_data(sc):
+            out += f"  SAP instances: {sc.get('instance_count', 0)}\n"
+            for inst in sc.get("instances") or []:
+                out += (f"    - {inst.get('instance_name', '')} "
+                        f"({inst.get('resource_name', '')})\n")
+                out += _list_warnings(inst.get("warnings"), indent="      ")
+        sie = r.get("sapInstanceErrors") or {}
+        if _has_data(sie):
+            out += f"  SAP instance errors: {sie.get('error_count', 0)}\n"
+            for err in sie.get("errors") or []:
+                out += f"    - {err.get('message', '')}\n"
         out += "\n"
 
     # ---- Storage -----
     storage_keys = ("lvmConfig", "raidConfig", "btrfsConfig", "blockDevices",
-                    "fstabAnalysis", "dfOutput", "mtabAnalysis")
+                    "fstabAnalysis", "dfOutput", "mtabAnalysis", "nvmeList",
+                    "iscsiConfig")
     if any(_has_data(r.get(k)) for k in storage_keys):
         out += _section("STORAGE")
         bd = r.get("blockDevices") or {}
@@ -790,10 +1046,21 @@ def format_text(results: ArchiveResults) -> str:  # noqa: C901 - long but linear
             if extras:
                 out += f" ({len(extras)} not in fstab)"
             out += "\n"
+        nv = r.get("nvmeList") or {}
+        if _has_data(nv):
+            out += f"  NVMe drives: {nv.get('drive_count', 0)}\n"
+        isc = r.get("iscsiConfig") or {}
+        if _has_data(isc):
+            out += (f"  iSCSI: {len(isc.get('targets') or [])} target(s), "
+                    f"{len(isc.get('sessions') or [])} session(s)\n")
+            if isc.get("initiator_name"):
+                out += f"    Initiator: {isc['initiator_name']}\n"
+            out += _list_warnings(isc.get("warnings"))
         out += "\n"
 
     # ---- Networking -----
-    net_keys = ("networkInterfaces", "firewallRules", "sshServiceIssues")
+    net_keys = ("networkInterfaces", "firewallRules", "sshServiceIssues", "hostsFile",
+                "nsswitchConfig")
     if any(_has_data(r.get(k)) for k in net_keys):
         out += _section("NETWORKING")
         ni = r.get("networkInterfaces") or {}
@@ -817,6 +1084,25 @@ def format_text(results: ArchiveResults) -> str:  # noqa: C901 - long but linear
         ssh = r.get("sshServiceIssues") or {}
         if _has_data(ssh):
             out += f"  SSH issues: {ssh.get('count', 0)} event(s)\n"
+        hf = r.get("hostsFile") or {}
+        if _has_data(hf):
+            entries = hf.get("entries") or []
+            out += f"  /etc/hosts: {len(entries)} entry(ies)\n"
+            for e in entries:
+                names = " ".join(e.get("hostnames") or [])
+                out += f"    {e.get('ip', '')} {names}\n"
+        ns = r.get("nsswitchConfig") or {}
+        if _has_data(ns):
+            dbs = ns.get("databases") or []
+            out += f"  nsswitch.conf: {len(dbs)} database(s)\n"
+            for e in ns.get("entries") or []:
+                svcs = " ".join(e.get("services") or [])
+                out += f"    {e.get('database', '')}: {svcs}\n"
+            for p in ns.get("third_party_providers") or []:
+                pdbs = ", ".join(p.get("databases") or [])
+                out += (f"    Identity provider: {p.get('product', '')} "
+                        f"({p.get('service', '')}) on {pdbs}\n")
+            out += _list_warnings(ns.get("warnings"))
         out += "\n"
 
     # ---- Events -----
@@ -834,6 +1120,7 @@ def format_text(results: ArchiveResults) -> str:  # noqa: C901 - long but linear
         "Kernel reboots": _count("kernelReboots"),
         "OOM killer": _count("oomKiller"),
         "XFS errors": _count("xfsErrors"),
+        "SELinux errors": _count("selinuxErrors"),
         "Automation": _count("automationEvents"),
         "Emergency mode": _count("emergencyMode"),
     }
@@ -844,11 +1131,72 @@ def format_text(results: ArchiveResults) -> str:  # noqa: C901 - long but linear
                 out += f"  {label}: {count} event(s)\n"
         out += "\n"
 
+    # ---- OS tuning (mirrors the web "OS Tuning" section) -----
+    tuning_keys = ("tunedProfile", "swapSpace", "fstrim")
+    if any(_has_data(r.get(k)) for k in tuning_keys):
+        out += _section("OS TUNING")
+
+        tuned = r.get("tunedProfile") or {}
+        if _has_data(tuned):
+            out += f"  Tuned profile: {tuned.get('active_profile') or '-'}\n"
+            out += _list_warnings(tuned.get("warnings"))
+            out += _list_warnings(tuned.get("recommendations"))
+
+        swap = r.get("swapSpace") or {}
+        if _has_data(swap):
+            total = _format_kb(swap.get("swap_total_kb"))
+            free = _format_kb(swap.get("swap_free_kb"))
+            out += f"  Swap: total {total} | free {free}\n"
+            out += _list_warnings(swap.get("warnings"))
+
+        fstrim = r.get("fstrim") or {}
+        if _has_data(fstrim):
+            enabled = "Yes" if fstrim.get("timer_enabled") else "No"
+            out += (f"  fstrim timer: {fstrim.get('timer_state') or '-'} | "
+                    f"periodic trim enabled: {enabled}\n")
+            out += _list_warnings(fstrim.get("warnings"))
+
+        out += "\n"
+
+    # ---- SELinux (mirrors the web "SELinux" section) -----
+    selinux = r.get("selinux") or {}
+    selinux_error_count = _count("selinuxErrors")
+    if _has_data(selinux) or selinux_error_count:
+        out += _section("SELINUX")
+        current = selinux.get("current_mode")
+        configured = selinux.get("config_mode")
+        out += f"  Status: {current or configured or 'unknown'}\n"
+        out += f"  Current mode: {current or '-'}\n"
+        out += f"  Mode from config: {configured or '-'}\n"
+        source_path = selinux.get("source_path")
+        if source_path:
+            line = (selinux.get("current_source_line")
+                    or selinux.get("config_source_line"))
+            out += f"  Status source: {source_path}"
+            out += f":{line}\n" if line else "\n"
+        out += _list_warnings(selinux.get("warnings"))
+        out += _list_warnings(selinux.get("recommendations"))
+
+        events = (r.get("selinuxErrors") or {}).get("events") or []
+        if events:
+            out += f"  Errors: {len(events)} event(s)\n"
+            for event in events:
+                path = event.get("source_path") or "unknown source"
+                line = event.get("source_line") or event.get("line_number") or "?"
+                perms = ", ".join(event.get("permissions") or []) or "-"
+                out += (f"    {path}:{line} "
+                        f"[{event.get('event_type') or 'AVC'}] "
+                        f"comm={event.get('command') or '-'} perms={perms}\n")
+                if event.get("raw_line"):
+                    out += f"      {event['raw_line']}\n"
+
+        out += "\n"
+
     # ---- Packages / RHUI -----
     pkg_keys = ("distroPackages", "rhuiConfig", "rhelRhuiCheck",
                 "eusVersionLock", "rhuiErrors", "cryptoPolicies",
-                "fipsModeSetup", "kernelCmdline", "kernelTuning",
-                "hugePages")
+                "fipsModeSetup", "kernelCmdline", "secureBoot",
+                "kernelTuning", "hugePages")
     if any(_has_data(r.get(k)) for k in pkg_keys):
         out += _section("PACKAGES / DISTRIBUTION")
         dp = r.get("distroPackages") or {}
@@ -872,6 +1220,15 @@ def format_text(results: ArchiveResults) -> str:  # noqa: C901 - long but linear
         kc = r.get("kernelCmdline") or {}
         if _has_data(kc) and kc.get("cmdline"):
             out += f"  Kernel cmdline: {kc['cmdline']}\n"
+        sb = r.get("secureBoot") or {}
+        if _has_data(sb):
+            if not sb.get("supported", True):
+                state = "not supported (no EFI variables)"
+            else:
+                enabled = sb.get("enabled")
+                state = "unknown" if enabled is None else (
+                    "enabled" if enabled else "disabled")
+            out += f"  SecureBoot: {state}\n"
         re_ = r.get("rhuiErrors") or {}
         if _has_data(re_):
             out += f"  RHUI errors: {re_.get('count', 0)}\n"
@@ -923,6 +1280,16 @@ def format_text(results: ArchiveResults) -> str:  # noqa: C901 - long but linear
             out += (f"  SUSE Cloud Register: "
                     f"{sc.get('billing_model') or 'n/a'} via "
                     f"{sc.get('registration_server') or '-'}\n")
+        out += "\n"
+
+    # ---- Configuration management -----
+    if any(_has_data(r.get(k)) for k in ("puppetAgent", "chefClient")):
+        out += _section("CONFIGURATION MANAGEMENT")
+        for key, label in (("puppetAgent", "Puppet"), ("chefClient", "Chef")):
+            v = r.get(key) or {}
+            if _has_data(v):
+                state = "running" if v.get("running") else "not running"
+                out += f"  {label}: detected ({state})\n"
         out += "\n"
 
     # ---- Security software -----

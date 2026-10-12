@@ -126,3 +126,33 @@ const networkSysctlParser = {
         }
     }
 };
+
+/**
+ * `/etc/nsswitch.conf` parser. Flags third-party identity providers
+ * (Centrify, SSSD, winbind, LDAP, NIS, ...) plus lookup-order anomalies
+ * that make logins and name resolution depend on an off-box service.
+ */
+function emptyNsswitchResult() {
+    return {
+        found: false,
+        entries: [],
+        databases: [],
+        thirdPartyProviders: [],
+        hasThirdPartyProviders: false,
+        warnings: [],
+        sourcePath: ''
+    };
+}
+const nsswitchConfigParser = {
+    filePattern: /(?:etc\/nsswitch\.conf$|\/nsswitch\.conf$|network\.txt$)/,
+    multiFile: false,
+    parse: function(content, filename) {
+        if (typeof WASM_BRIDGE === 'undefined' || !WASM_BRIDGE.isReady()) return emptyNsswitchResult();
+        try {
+            return WASM_BRIDGE.parseJson('parseNsswitch', content, filename || '') || emptyNsswitchResult();
+        } catch (err) {
+            console.error('[networking.js] parseNsswitch WASM call failed:', err);
+            return emptyNsswitchResult();
+        }
+    }
+};

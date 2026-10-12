@@ -1,5 +1,4 @@
 use leptos::prelude::*;
-use supportfile::parse_pacemaker_high_cpu;
 use serde_json::Value;
 
 use super::helpers::*;
@@ -17,6 +16,7 @@ pub fn ClusterSection(data: Value) -> impl IntoView {
     let sbd = data.get("sbdConfig").cloned().unwrap_or(Value::Null);
     let nodes = data.get("clusterNodes").cloned().unwrap_or(Value::Null);
     let events = data.get("clusterEvents").cloned().unwrap_or(Value::Null);
+    let high_cpu = data.get("highCpuEvents").cloned().unwrap_or(Value::Null);
     let maintenance = data
         .get("clusterMaintenanceMode")
         .cloned()
@@ -56,7 +56,8 @@ pub fn ClusterSection(data: Value) -> impl IntoView {
         || !nodes_in_hosts.is_empty()
         || !nodes_missing_from_hosts.is_empty();
     let has_event_content = !json_array(&events, "resourceMigrations").is_empty()
-        || !json_array(&events, "fencingEvents").is_empty();
+        || !json_array(&events, "fencingEvents").is_empty()
+        || !json_array(&high_cpu, "events").is_empty();
 
     let has_content = has_corosync_content
         || json_bool(&cluster_status, "found")
@@ -110,6 +111,7 @@ pub fn ClusterSection(data: Value) -> impl IntoView {
             {render_maintenance_section(&maintenance)}
             {render_sbd_section(&sbd)}
             {render_cluster_events(&events)}
+            {render_high_cpu_events(&high_cpu)}
             {render_daemon_status(&daemon)}
             {render_cluster_services(&cluster_services)}
             {render_azure_fence_auth(&azure_fence)}
@@ -962,13 +964,6 @@ fn render_cluster_events(events: &Value) -> Option<AnyView> {
         .unwrap_or(fencing_events.len() as u64) as usize;
     let total_events = total_migrations + total_fencing;
 
-    let rust_high_cpu_input = resource_migrations
-        .iter()
-        .filter_map(|migration| migration.get("logLine").and_then(|v| v.as_str()))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let rust_high_cpu_events = parse_pacemaker_high_cpu(&rust_high_cpu_input, "");
-
     Some(
         view! {
             <details class="warning-block" open=true>
@@ -1033,33 +1028,6 @@ fn render_cluster_events(events: &Value) -> Option<AnyView> {
                         </>
                     })}
 
-                    {(!rust_high_cpu_events.is_empty()).then(|| view! {
-                        <div class="subsection">
-                            <p><strong>{format!("Rust parser preview: Pacemaker high CPU events ({})", rust_high_cpu_events.len())}</strong></p>
-                            <p class="text-muted">
-                                "This list is produced by the shared Supportfile library used for the WASM UI and the Python prototype."
-                            </p>
-                            <ul class="disk-list">
-                                {rust_high_cpu_events
-                                    .clone()
-                                    .into_iter()
-                                    .map(|event| {
-                                        view! {
-                                            <li class="event-item">
-                                                <div class="event-timestamp text-warning">{event.timestamp}</div>
-                                                <div>
-                                                    <strong class="text-warning">{event.source_node}</strong>
-                                                    {format!(" - {:.6}% CPU via {}", event.cpu_load, event.resource)}
-                                                </div>
-                                                <div class="event-raw-line">{event.raw_line}</div>
-                                            </li>
-                                        }
-                                    })
-                                    .collect::<Vec<_>>()}
-                            </ul>
-                        </div>
-                    })}
-
                     {(!fencing_events.is_empty()).then(|| view! {
                         <div class="subsection-danger">
                             <p><strong>{format!("Fencing/STONITH Events ({})", total_fencing)}</strong></p>
@@ -1121,6 +1089,78 @@ fn render_cluster_events(events: &Value) -> Option<AnyView> {
                             </ul>
                         </div>
                     })}
+                </div>
+            </details>
+        }
+        .into_any(),
+    )
+}
+
+fn render_high_cpu_events(high_cpu: &Value) -> Option<AnyView> {
+    let mut events = json_array(high_cpu, "events");
+    if events.is_empty() {
+        return None;
+    }
+    events.sort_by(|a, b| json_text(b, "timestamp").cmp(&json_text(a, "timestamp")));
+
+    Some(
+        view! {
+            <details class="warning-block" open=true>
+                <summary>
+                    {format!(
+                        "Pacemaker High CPU Load ({} event{} found)",
+                        events.len(),
+                        if events.len() == 1 { "" } else { "s" },
+                    )}
+                </summary>
+                <div class="section-body">
+                    <ul class="disk-list">
+                        {events
+                            .into_iter()
+                            .map(|event| {
+                                let timestamp = json_text(&event, "timestamp");
+                                let node = json_text(&event, "sourceNode");
+                                let resource = json_text(&event, "resource");
+                                let load = event
+                                    .get("cpuLoad")
+                                    .and_then(|v| v.as_f64())
+                                    .unwrap_or(0.0);
+                                let source_file = first_non_empty_text(
+                                    &event,
+                                    &["sourcePath", "sourceFile"],
+                                );
+                                let source_line = json_text(&event, "sourceLine");
+                                let raw_line = json_text(&event, "rawLine");
+                                view! {
+                                    <li class="event-item">
+                                        {(!timestamp.is_empty()).then(|| view! {
+                                            <div class="event-timestamp text-warning">{timestamp.clone()}</div>
+                                        })}
+                                        <div>
+                                            <strong class="text-warning">{node.clone()}</strong>
+                                            {format!(" - {:.2}% CPU load via {}", load, resource.clone())}
+                                        </div>
+                                        {(!source_file.is_empty()).then(|| view! {
+                                            <div class="event-details">
+                                                {format!(
+                                                    "Source: {}{}",
+                                                    source_file.clone(),
+                                                    if source_line.is_empty() {
+                                                        String::new()
+                                                    } else {
+                                                        format!(":{}", source_line.clone())
+                                                    },
+                                                )}
+                                            </div>
+                                        })}
+                                        {(!raw_line.is_empty()).then(|| view! {
+                                            <div class="event-raw-line">{raw_line.clone()}</div>
+                                        })}
+                                    </li>
+                                }
+                            })
+                            .collect::<Vec<_>>()}
+                    </ul>
                 </div>
             </details>
         }

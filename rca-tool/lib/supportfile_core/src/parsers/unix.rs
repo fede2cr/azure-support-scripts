@@ -285,6 +285,36 @@ pub struct CryptoPoliciesResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct NsswitchEntry {
+    pub database: String,
+    pub services: Vec<String>,
+    /// Action tokens such as `[NOTFOUND=return]`, in the order they appear.
+    pub actions: Vec<String>,
+    pub source_line: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct NsswitchProvider {
+    /// The NSS service token as written in the file (e.g. `centrify`).
+    pub service: String,
+    /// Human-readable product the token belongs to.
+    pub product: String,
+    /// Databases this provider is wired into, in file order.
+    pub databases: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct NsswitchResult {
+    pub found: bool,
+    pub entries: Vec<NsswitchEntry>,
+    pub databases: Vec<String>,
+    pub third_party_providers: Vec<NsswitchProvider>,
+    pub has_third_party_providers: bool,
+    pub warnings: Vec<UnixWarning>,
+    pub source_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FipsModeSetupResult {
     pub found: bool,
     pub fips_enabled: bool,
@@ -308,8 +338,10 @@ pub struct SelinuxResult {
     pub found: bool,
     /// Mode declared in /etc/selinux/config (SELINUX=...).
     pub config_mode: Option<String>,
+    pub config_source_line: Option<usize>,
     /// Mode currently in effect, as reported by sestatus.
     pub current_mode: Option<String>,
+    pub current_source_line: Option<usize>,
     pub warnings: Vec<UnixWarning>,
     pub recommendations: Vec<UnixWarning>,
     pub source_path: String,
@@ -1721,6 +1753,338 @@ pub fn parse_crypto_policies(content: &str, source_path: &str) -> CryptoPolicies
     }
 }
 
+/// Third-party / networked NSS providers. A support archive that lists any of
+/// these tells us identity lookups leave the box, which is the usual cause of
+/// hung logins, slow `sudo`, and stalled cluster tooling when the provider or
+/// its network path is unhealthy.
+const NSS_THIRD_PARTY: &[(&str, &str)] = &[
+    ("centrify", "Centrify DirectControl"),
+    ("centrifydc", "Centrify DirectControl"),
+    ("adnss", "Centrify DirectControl"),
+    ("sss", "SSSD"),
+    ("winbind", "Samba winbind"),
+    ("ldap", "LDAP (nss_ldap)"),
+    ("nis", "NIS/YP"),
+    ("nisplus", "NIS+"),
+    ("vas4", "One Identity Authentication Services"),
+    ("vas", "One Identity Authentication Services"),
+    ("lsass", "BeyondTrust PowerBroker Identity Services"),
+    ("pbis", "BeyondTrust PowerBroker Identity Services"),
+    ("wins", "NetBIOS WINS"),
+];
+
+/// Databases where losing local `files` resolution can lock an operator out of
+/// the VM entirely.
+const NSS_CRITICAL_DATABASES: &[&str] = &["passwd", "group", "shadow"];
+
+/// Pull the `/etc/nsswitch.conf` body out of an aggregated supportconfig file.
+fn extract_nsswitch_section(content: &str) -> Option<String> {
+    let mut lines: Vec<&str> = Vec::new();
+    let mut in_section = false;
+    for line in content.lines() {
+        if !in_section {
+            if line.trim_start().starts_with('#') && line.contains("/etc/nsswitch.conf") {
+                in_section = true;
+            }
+            continue;
+        }
+        if line.starts_with("#==") {
+            break;
+        }
+        if line.trim_start().starts_with("# /") && !line.contains("/etc/nsswitch.conf") {
+            break;
+        }
+        lines.push(line);
+    }
+    if lines.is_empty() {
+        None
+    } else {
+        Some(lines.join("\n"))
+    }
+}
+
+pub fn parse_nsswitch(content: &str, source_path: &str) -> NsswitchResult {
+    let mut result = NsswitchResult {
+        found: false,
+        entries: Vec::new(),
+        databases: Vec::new(),
+        third_party_providers: Vec::new(),
+        has_third_party_providers: false,
+        warnings: Vec::new(),
+        source_path: source_path.to_string(),
+    };
+
+    // supportconfig folds nsswitch.conf into network.txt; a standalone
+    // /etc/nsswitch.conf is used verbatim.
+    let aggregated = source_path.ends_with(".txt");
+    let body = if aggregated {
+        match extract_nsswitch_section(content) {
+            Some(s) => s,
+            None => return result,
+        }
+    } else {
+        content.to_string()
+    };
+
+    let mut seen_databases: BTreeMap<String, usize> = BTreeMap::new();
+
+    for (idx, raw) in body.lines().enumerate() {
+        let line = raw.split('#').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+        let Some((database, rest)) = line.split_once(':') else {
+            continue;
+        };
+        let database = database.trim().to_lowercase();
+        if database.is_empty() || database.contains(char::is_whitespace) {
+            continue;
+        }
+
+        let mut services: Vec<String> = Vec::new();
+        let mut actions: Vec<String> = Vec::new();
+        for token in rest.split_whitespace() {
+            if token.starts_with('[') {
+                actions.push(token.to_string());
+            } else {
+                services.push(token.to_lowercase());
+            }
+        }
+
+        let lineno = Some(idx + 1);
+        result.found = true;
+
+        if let Some(previous) = seen_databases.get(&database) {
+            result.warnings.push(UnixWarning {
+                r#type: "nsswitch_duplicate_database".to_string(),
+                severity: "warning".to_string(),
+                message: format!(
+                    "Database '{}' is defined more than once in nsswitch.conf (lines {} and {}). Only the last definition takes effect.",
+                    database,
+                    previous,
+                    idx + 1
+                ),
+                recommendation: Some(format!(
+                    "Remove the redundant '{}:' line so the intended lookup order is obvious.",
+                    database
+                )),
+                documentation_url: None,
+                source_path: String::new(),
+                source_line: lineno,
+                source_line_end: None,
+            });
+        } else {
+            result.databases.push(database.clone());
+        }
+        seen_databases.insert(database.clone(), idx + 1);
+
+        if services.is_empty() {
+            result.warnings.push(UnixWarning {
+                r#type: "nsswitch_empty_database".to_string(),
+                severity: "warning".to_string(),
+                message: format!(
+                    "Database '{}' has no lookup sources, so every query against it fails immediately.",
+                    database
+                ),
+                recommendation: Some(format!("Add at least 'files' to the '{}' line.", database)),
+                documentation_url: None,
+                source_path: String::new(),
+                source_line: lineno,
+                source_line_end: None,
+            });
+        }
+
+        // `[NOTFOUND=return]` stops the search, so anything listed after it is
+        // only consulted when an earlier source is UNAVAIL, never on a miss.
+        if let Some(pos) = rest
+            .split_whitespace()
+            .position(|t| t.to_uppercase().contains("NOTFOUND=RETURN"))
+        {
+            let after: Vec<&str> = rest
+                .split_whitespace()
+                .skip(pos + 1)
+                .filter(|t| !t.starts_with('['))
+                .collect();
+            if !after.is_empty() {
+                result.warnings.push(UnixWarning {
+                    r#type: "nsswitch_notfound_return_shadows_sources".to_string(),
+                    severity: "warning".to_string(),
+                    message: format!(
+                        "Database '{}' has [NOTFOUND=return] before {}, so {} {} never consulted when a lookup simply misses.",
+                        database,
+                        after.join(", "),
+                        after.join(", "),
+                        if after.len() == 1 { "is" } else { "are" }
+                    ),
+                    recommendation: Some(
+                        "Move [NOTFOUND=return] to the end of the line, or drop it, so later sources are reachable.".to_string(),
+                    ),
+                    documentation_url: None,
+                    source_path: String::new(),
+                    source_line: lineno,
+                    source_line_end: None,
+                });
+            }
+        }
+
+        for (token, product) in NSS_THIRD_PARTY {
+            if !services.iter().any(|s| s == token) {
+                continue;
+            }
+            // `nis` also matches `nisplus`; keep only the exact token match.
+            match result
+                .third_party_providers
+                .iter_mut()
+                .find(|p| p.service == *token)
+            {
+                Some(existing) => existing.databases.push(database.clone()),
+                None => result.third_party_providers.push(NsswitchProvider {
+                    service: (*token).to_string(),
+                    product: (*product).to_string(),
+                    databases: vec![database.clone()],
+                }),
+            }
+        }
+
+        let is_critical = NSS_CRITICAL_DATABASES.contains(&database.as_str());
+        if is_critical || database == "hosts" {
+            let files_pos = services.iter().position(|s| s == "files" || s == "altfiles");
+            match files_pos {
+                None => {
+                    let severity = if is_critical { "error" } else { "warning" };
+                    result.warnings.push(UnixWarning {
+                        r#type: "nsswitch_missing_files".to_string(),
+                        severity: severity.to_string(),
+                        message: format!(
+                            "Database '{}' does not include 'files', so local /etc entries are ignored and the VM depends entirely on {}.",
+                            database,
+                            if services.is_empty() { "nothing".to_string() } else { services.join(", ") }
+                        ),
+                        recommendation: Some(format!(
+                            "Add 'files' as the first source on the '{}' line so local accounts and hostnames keep resolving if the remote provider is unreachable.",
+                            database
+                        )),
+                        documentation_url: None,
+                        source_path: String::new(),
+                        source_line: lineno,
+                        source_line_end: None,
+                    });
+                }
+                Some(pos) if pos > 0 => {
+                    result.warnings.push(UnixWarning {
+                        r#type: "nsswitch_files_not_first".to_string(),
+                        severity: "warning".to_string(),
+                        message: format!(
+                            "Database '{}' queries {} before 'files'. Local accounts and hostnames are resolved remotely first, which stalls logins when that provider is slow or down.",
+                            database,
+                            services[..pos].join(", ")
+                        ),
+                        recommendation: Some(format!(
+                            "Put 'files' first on the '{}' line.",
+                            database
+                        )),
+                        documentation_url: None,
+                        source_path: String::new(),
+                        source_line: lineno,
+                        source_line_end: None,
+                    });
+                }
+                _ => {}
+            }
+        }
+
+        if database == "hosts" && !services.iter().any(|s| s == "dns" || s == "resolve") {
+            result.warnings.push(UnixWarning {
+                r#type: "nsswitch_hosts_missing_dns".to_string(),
+                severity: "warning".to_string(),
+                message:
+                    "Database 'hosts' does not include 'dns', so only /etc/hosts and local sources resolve names. Azure endpoints and cluster peers not listed there will fail."
+                        .to_string(),
+                recommendation: Some(
+                    "Add 'dns' to the 'hosts' line unless the VM is deliberately isolated."
+                        .to_string(),
+                ),
+                documentation_url: None,
+                source_path: String::new(),
+                source_line: lineno,
+                source_line_end: None,
+            });
+        }
+
+        if services.iter().any(|s| s == "compat") {
+            result.warnings.push(UnixWarning {
+                r#type: "nsswitch_legacy_compat".to_string(),
+                severity: "info".to_string(),
+                message: format!(
+                    "Database '{}' uses the legacy 'compat' source, which pulls in NIS through /etc/passwd '+' entries.",
+                    database
+                ),
+                recommendation: Some(
+                    "Replace 'compat' with 'files' unless NIS netgroup syntax is still required."
+                        .to_string(),
+                ),
+                documentation_url: None,
+                source_path: String::new(),
+                source_line: lineno,
+                source_line_end: None,
+            });
+        }
+
+        result.entries.push(NsswitchEntry {
+            database,
+            services,
+            actions,
+            source_line: lineno,
+        });
+    }
+
+    if !result.found {
+        return result;
+    }
+
+    result.has_third_party_providers = !result.third_party_providers.is_empty();
+    for provider in &result.third_party_providers {
+        result.warnings.push(UnixWarning {
+            r#type: "nsswitch_third_party_provider".to_string(),
+            severity: "warning".to_string(),
+            message: format!(
+                "{} ('{}') resolves {}. Name lookups leave this VM, so a hung or unreachable provider blocks logins, sudo and any tooling that resolves users or hosts.",
+                provider.product,
+                provider.service,
+                provider.databases.join(", ")
+            ),
+            recommendation: Some(format!(
+                "Confirm the {} daemon is running and the directory service is reachable before treating this as a local OS fault.",
+                provider.product
+            )),
+            documentation_url: None,
+            source_path: String::new(),
+            source_line: None,
+            source_line_end: None,
+        });
+    }
+
+    for required in ["passwd", "group", "hosts"] {
+        if !result.databases.iter().any(|d| d == required) {
+            result.warnings.push(UnixWarning {
+                r#type: "nsswitch_missing_database".to_string(),
+                severity: "warning".to_string(),
+                message: format!(
+                    "nsswitch.conf has no '{}' entry; glibc falls back to a built-in default that may not match the rest of the configuration.",
+                    required
+                ),
+                recommendation: Some(format!("Add an explicit '{}:' line.", required)),
+                documentation_url: None,
+                source_path: String::new(),
+                source_line: None,
+                source_line_end: None,
+            });
+        }
+    }
+
+    result
+}
+
 pub fn parse_fips_mode_setup(content: &str, source_path: &str) -> FipsModeSetupResult {
     let trimmed = content.trim();
     let found = !trimmed.is_empty();
@@ -1813,20 +2177,25 @@ pub fn parse_tuned_profile(content: &str, source_path: &str) -> TunedProfileResu
 
 pub fn parse_selinux(content: &str, source_path: &str) -> SelinuxResult {
     let mut config_mode = None;
+    let mut config_source_line = None;
     let mut current_mode = None;
-    for line in content.lines() {
+    let mut current_source_line = None;
+    for (index, line) in content.lines().enumerate() {
         let trimmed = line.trim();
         if let Some(c) = crate::cached_regex!(r"(?i)^\s*SELINUX=(\w+)").captures(trimmed) {
             config_mode = Some(c[1].to_ascii_lowercase());
+            config_source_line = Some(index + 1);
         }
         if let Some(c) = crate::cached_regex!(r"(?i)^Current mode:\s*(\w+)").captures(trimmed) {
             current_mode = Some(c[1].to_ascii_lowercase());
+            current_source_line = Some(index + 1);
         }
         if config_mode.is_none() {
             if let Some(c) =
                 crate::cached_regex!(r"(?i)^Mode from config file:\s*(\w+)").captures(trimmed)
             {
                 config_mode = Some(c[1].to_ascii_lowercase());
+                config_source_line = Some(index + 1);
             }
         }
     }
@@ -1845,15 +2214,17 @@ pub fn parse_selinux(content: &str, source_path: &str) -> SelinuxResult {
             documentation_url: Some(
                 "https://launchpad.support.sap.com/#/notes/2936683".to_string(),
             ),
-            source_path: String::new(),
-            source_line: None,
-            source_line_end: None,
+            source_path: source_path.to_string(),
+            source_line: current_source_line.or(config_source_line),
+            source_line_end: current_source_line.or(config_source_line),
         });
     }
     SelinuxResult {
         found,
         config_mode,
+        config_source_line,
         current_mode,
+        current_source_line,
         warnings,
         recommendations: Vec::new(),
         source_path: source_path.to_string(),
@@ -2347,6 +2718,7 @@ json_wrap!(parse_rhui_config_json, parse_rhui_config);
 json_wrap!(parse_eus_version_lock_json, parse_eus_version_lock);
 json_wrap!(parse_rhel_rhui_check_json, parse_rhel_rhui_check);
 json_wrap!(parse_crypto_policies_json, parse_crypto_policies);
+json_wrap!(parse_nsswitch_json, parse_nsswitch);
 json_wrap!(parse_fips_mode_setup_json, parse_fips_mode_setup);
 json_wrap!(parse_tuned_profile_json, parse_tuned_profile);
 json_wrap!(parse_selinux_json, parse_selinux);
@@ -2359,6 +2731,163 @@ json_wrap!(parse_leapp_log_json, parse_leapp_log);
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const NSSWITCH_PATH: &str = "etc/nsswitch.conf";
+
+    fn warning_types(result: &NsswitchResult) -> Vec<&str> {
+        result.warnings.iter().map(|w| w.r#type.as_str()).collect()
+    }
+
+    #[test]
+    fn parses_clean_nsswitch_without_warnings() {
+        let input = concat!(
+            "# /etc/nsswitch.conf\n",
+            "passwd:     files\n",
+            "group:      files\n",
+            "shadow:     files\n",
+            "hosts:      files dns\n",
+        );
+        let result = parse_nsswitch(input, NSSWITCH_PATH);
+        assert!(result.found);
+        assert_eq!(result.entries.len(), 4);
+        assert_eq!(result.databases, vec!["passwd", "group", "shadow", "hosts"]);
+        assert!(!result.has_third_party_providers);
+        assert!(result.warnings.is_empty(), "{:?}", warning_types(&result));
+    }
+
+    #[test]
+    fn detects_centrify_provider() {
+        let input = concat!(
+            "passwd:     files centrify\n",
+            "group:      files centrify\n",
+            "shadow:     files\n",
+            "hosts:      files dns\n",
+        );
+        let result = parse_nsswitch(input, NSSWITCH_PATH);
+        assert!(result.has_third_party_providers);
+        assert_eq!(result.third_party_providers.len(), 1);
+        let provider = &result.third_party_providers[0];
+        assert_eq!(provider.service, "centrify");
+        assert_eq!(provider.product, "Centrify DirectControl");
+        assert_eq!(provider.databases, vec!["passwd", "group"]);
+        assert!(warning_types(&result).contains(&"nsswitch_third_party_provider"));
+    }
+
+    #[test]
+    fn detects_sssd_and_winbind_providers() {
+        let input = "passwd: files sss\ngroup: files winbind\nhosts: files dns\n";
+        let result = parse_nsswitch(input, NSSWITCH_PATH);
+        let products: Vec<&str> = result
+            .third_party_providers
+            .iter()
+            .map(|p| p.product.as_str())
+            .collect();
+        assert!(products.contains(&"SSSD"));
+        assert!(products.contains(&"Samba winbind"));
+    }
+
+    #[test]
+    fn flags_remote_provider_ahead_of_files() {
+        let input = "passwd: ldap files\ngroup: files\nhosts: files dns\n";
+        let result = parse_nsswitch(input, NSSWITCH_PATH);
+        assert!(warning_types(&result).contains(&"nsswitch_files_not_first"));
+    }
+
+    #[test]
+    fn flags_missing_files_as_error() {
+        let input = "passwd: sss\ngroup: files\nhosts: files dns\n";
+        let result = parse_nsswitch(input, NSSWITCH_PATH);
+        let warning = result
+            .warnings
+            .iter()
+            .find(|w| w.r#type == "nsswitch_missing_files")
+            .expect("missing_files warning");
+        assert_eq!(warning.severity, "error");
+    }
+
+    #[test]
+    fn flags_hosts_without_dns() {
+        let input = "passwd: files\ngroup: files\nhosts: files\n";
+        let result = parse_nsswitch(input, NSSWITCH_PATH);
+        assert!(warning_types(&result).contains(&"nsswitch_hosts_missing_dns"));
+    }
+
+    #[test]
+    fn flags_notfound_return_shadowing_later_sources() {
+        let input = "passwd: files\ngroup: files\nhosts: files [NOTFOUND=return] dns\n";
+        let result = parse_nsswitch(input, NSSWITCH_PATH);
+        assert!(warning_types(&result).contains(&"nsswitch_notfound_return_shadows_sources"));
+        let hosts = result
+            .entries
+            .iter()
+            .find(|e| e.database == "hosts")
+            .expect("hosts entry");
+        assert_eq!(hosts.services, vec!["files", "dns"]);
+        assert_eq!(hosts.actions, vec!["[NOTFOUND=return]"]);
+    }
+
+    #[test]
+    fn flags_duplicate_and_empty_databases() {
+        let input = "passwd: files\npasswd: files sss\ngroup:\nhosts: files dns\n";
+        let result = parse_nsswitch(input, NSSWITCH_PATH);
+        let types = warning_types(&result);
+        assert!(types.contains(&"nsswitch_duplicate_database"));
+        assert!(types.contains(&"nsswitch_empty_database"));
+        assert_eq!(result.databases.iter().filter(|d| *d == "passwd").count(), 1);
+    }
+
+    #[test]
+    fn flags_missing_required_database() {
+        let input = "passwd: files\ngroup: files\n";
+        let result = parse_nsswitch(input, NSSWITCH_PATH);
+        assert!(warning_types(&result).contains(&"nsswitch_missing_database"));
+    }
+
+    #[test]
+    fn ignores_comments_and_inline_comments() {
+        let input = "# passwd: ldap\npasswd: files # centrify\ngroup: files\nhosts: files dns\n";
+        let result = parse_nsswitch(input, NSSWITCH_PATH);
+        assert!(!result.has_third_party_providers);
+        assert_eq!(result.entries.len(), 3);
+    }
+
+    #[test]
+    fn extracts_nsswitch_from_supportconfig_network_txt() {
+        let input = concat!(
+            "#==[ Configuration File ]===========================#\n",
+            "# /etc/hosts\n",
+            "127.0.0.1 localhost\n",
+            "\n",
+            "#==[ Configuration File ]===========================#\n",
+            "# /etc/nsswitch.conf\n",
+            "passwd: compat centrify\n",
+            "hosts:  files dns\n",
+            "\n",
+            "#==[ Configuration File ]===========================#\n",
+            "# /etc/resolv.conf\n",
+            "nameserver 10.0.0.1\n",
+        );
+        let result = parse_nsswitch(input, "scc_test/network.txt");
+        assert!(result.found);
+        assert_eq!(result.databases, vec!["passwd", "hosts"]);
+        assert!(result.has_third_party_providers);
+        assert!(warning_types(&result).contains(&"nsswitch_legacy_compat"));
+    }
+
+    #[test]
+    fn returns_not_found_for_unrelated_content() {
+        let result = parse_nsswitch("nothing to see here\n", "scc_test/network.txt");
+        assert!(!result.found);
+        assert!(result.entries.is_empty());
+    }
+
+    #[test]
+    fn json_wrapper_stamps_source_path() {
+        let json = parse_nsswitch_json("passwd: files sss\n", NSSWITCH_PATH);
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(value["source_path"], NSSWITCH_PATH);
+        assert_eq!(value["warnings"][0]["source_path"], NSSWITCH_PATH);
+    }
 
     #[test]
     fn parses_os_release_and_eol_warning() {

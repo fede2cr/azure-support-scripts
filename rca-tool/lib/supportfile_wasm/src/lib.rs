@@ -259,6 +259,11 @@ pub fn parse_nfs_mounts_json(content: &str, source_path: &str) -> String {
     sf::parse_nfs_mounts_json(content, source_path)
 }
 
+#[wasm_bindgen(js_name = parseNsswitch)]
+pub fn parse_nsswitch_json(content: &str, source_path: &str) -> String {
+    sf::parse_nsswitch_json(content, source_path)
+}
+
 #[wasm_bindgen(js_name = parseHanaSavepoints)]
 pub fn parse_hana_savepoints_json(content: &str, source_path: &str) -> String {
     sf::parse_hana_savepoints_json(content, source_path)
@@ -447,6 +452,11 @@ pub fn parse_suse_cloud_register_json(content: &str, source_path: &str) -> Strin
 #[wasm_bindgen(js_name = parseSelinux)]
 pub fn parse_selinux_json(content: &str, source_path: &str) -> String {
     sf::parse_selinux_json(content, source_path)
+}
+
+#[wasm_bindgen(js_name = parseSelinuxErrors)]
+pub fn parse_selinux_errors_json(content: &str, source_path: &str) -> String {
+    sf::parse_selinux_errors_json(content, source_path)
 }
 
 #[wasm_bindgen(js_name = parseSwapSpace)]
